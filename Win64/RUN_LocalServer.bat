@@ -1,0 +1,1 @@
+TslGame.exe -LobbyUrl=file:///%~dp0index.html -port=8888 -AllowJoinAnyMatchState -NoBattleEye -NoBE -NoEAC -NoVerifyGC
