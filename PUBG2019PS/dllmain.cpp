@@ -19,6 +19,7 @@
 #include <condition_variable>
 
 #include "../PUBG2019PS/SDK/Engine_parameters.hpp"
+#include "../PUBG2019PS/SDK/TslGame_parameters.hpp"
 
 #include "BotLogic.h"
 #include "AirplaneLogic.h"
@@ -53,7 +54,148 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
             if (Params->NewState.ToString() == "InProgress")
             {
                 CUSTOMLOG("Loading airplane logic");
-                StartAirplane();
+                //StartAirplane();
+            }
+        }
+
+        if (Obj->IsA(UCharacterMovementComponent::StaticClass()))
+        {
+            UCharacterMovementComponent* CMC = (UCharacterMovementComponent*)Obj;
+            CMC->bIgnoreClientMovementErrorChecksAndCorrection = true;
+        }
+        
+        if (Func->GetName() == "ServerNotifyHit")
+        {
+            CUSTOMLOG("ServerNotifyHit by " + Obj->GetName());
+            auto Args = (Params::TslWeapon_Trajectory_ServerNotifyHit*)Parms;
+
+            ATslWeapon_Trajectory* Weapon = (ATslWeapon_Trajectory*)Obj;
+            auto Config = Weapon->WeaponTrajectoryData->TrajectoryConfig;
+
+            bool bIsHeadShot = 0;
+            bool bIsUpperBody = 0;
+
+            float finalDamage = 0.0f; // Final damage calculation
+            float HitCoefficient = 0.0f; // damage multiplier value by body part
+            float rawDamage = 0.0f;
+
+            if (Args->Impact.BoneName.ToString() == "Head")
+            {
+                printf("\n Shoot At Head \n");
+                HitCoefficient = 1.2f;
+                bIsHeadShot = 1;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "neck_01")
+            {
+                printf("\n Shoot At neck_01 \n");
+                HitCoefficient = 1.2f;
+                bIsHeadShot = 1;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "clavicle_r" || Args->Impact.BoneName.ToString() == "clavicle_l")
+            {
+                printf("\n Shoot At clavicle_ \n");
+
+                HitCoefficient = 0.8f;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "spine_02" || Args->Impact.BoneName.ToString() == "spine_03")
+            {
+                printf("\n Shoot At Spine\n");
+
+                HitCoefficient = 0.75f;
+                bIsUpperBody = 1;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "pelvis")
+            {
+                printf("\n Shoot At pelvis\n");
+
+                HitCoefficient = 0.65f;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "thigh_r" || Args->Impact.BoneName.ToString() == "thigh_l")
+            {
+                printf("\n Shoot At thing_\n");
+
+                HitCoefficient = 0.45f;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "calf_r" || Args->Impact.BoneName.ToString() == "calf_l")
+            {
+                printf("\n Shoot At calf_\n");
+
+                HitCoefficient = 0.45f;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "foot_r" || Args->Impact.BoneName.ToString() == "foot_l")
+            {
+                printf("\n Shoot At foot_\n");
+
+                HitCoefficient = 0.25f;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "upperarm_r" || Args->Impact.BoneName.ToString() == "upperarm_l")
+            {
+                printf("\n Shoot At upperarm_\n");
+
+                HitCoefficient = 0.35f;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "lowerarm_r" || Args->Impact.BoneName.ToString() == "lowerarm_l")
+            {
+                printf("\n Shoot At lowerarm_\n");
+
+                HitCoefficient = 0.35f;
+            }
+
+            if (Args->Impact.BoneName.ToString() == "hand_r" || Args->Impact.BoneName.ToString() == "hand_l")
+            {
+                printf("\n Shoot At hand_\n");
+
+                HitCoefficient = 0.15f;
+            }
+
+            AActor* ActorHit = Args->Impact.Actor.Get();
+
+            if (ActorHit)
+            {
+                FHitResult Final{};
+                Final.Actor = Args->Impact.Actor;
+                Final.BoneName = Args->Impact.BoneName;
+                Final.Location = Args->Impact.Location;
+                Final.ImpactPoint = Args->Impact.ImpactPoint;
+                Final.PhysMaterial = Args->Impact.PhysMaterial;
+                Final.Component = Args->Impact.Component;
+                Final.ImpactNormal = Args->Impact.ImpactNormal;
+
+                float WeaponDamage = Config.HitDamage;
+
+                float equipmentDamageReduction = 0.0f;
+
+                float efalloff = 0;
+
+                float multiplier = pow(Config.RangeModifier, Args->TravelDistance / Config.ReferenceDistance);
+
+                efalloff = WeaponDamage * multiplier;
+
+                float rawDamage = efalloff;
+
+                float finalDamage = rawDamage * (1.0f - equipmentDamageReduction);
+
+                ATslCharacter* OwnerChar = (ATslCharacter*)Weapon->GetPawnOwner();
+                ATslPlayerState* ownerPS = (ATslPlayerState*)OwnerChar->GetTslPlayerState();
+
+                SDK::UGameplayStatics::ApplyPointDamage(Args->Impact.Actor.Get(), finalDamage, Args->TraceStart, Final, Weapon->GetPawnOwner()->Controller, Weapon, Config.DamageType);
+
+                printf("\n equipmentDamageReduction: %f \n", equipmentDamageReduction);
+
+                printf("\n FinalDamage Test: %f \n", finalDamage);
+            }
+            else
+            {
+                CUSTOMLOG("No actor hit");
             }
         }
 
@@ -291,7 +433,7 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
         for (ULevelStreaming* L : World->StreamingLevels) {
             if (!L) continue;
              
-            if (L->GetName().contains("3")) continue;
+            //if (L->GetName().contains("3")) continue;
 
             if (L->PackageName.ToString().contains("eather")) continue;
             if (L->PackageNameToLoad.ToString().contains("eather")) continue;
