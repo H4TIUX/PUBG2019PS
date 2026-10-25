@@ -832,12 +832,13 @@ namespace
             GM->GetAllPawns(&Pawns);
             if (Pawns.Num() > 0)
             {
-                //BLOG("NUM " + Pawns.Num());
                 for (APawn* O : Pawns)
                 {
                     if (O->IsA(CharClass))
                     {
                         ATslCharacter* C = static_cast<ATslCharacter*>(O);
+
+                        if (C == UGameplayStatics::GetPlayerCharacter(UWorld::GetWorld(), 0)) continue;
 
                         const bool bBot = IsBotChar(C);
                         if (bBot && C->bHidden) {
@@ -854,7 +855,6 @@ namespace
             }
             else
             {
-                //BLOG("No pawns to iterate through");
                 return;
             }
         }
@@ -900,27 +900,6 @@ namespace
     // which we only fall back to if nobody else is connected.
     ATslCharacter* FindRealPlayer(UWorld* World)
     {
-        /*
-        GatherCharacters(World);
-        ATslCharacter* Local = nullptr;
-        for (const FCharInfo& CI : GChars)
-        {
-            if (CI.IsBot)
-                continue;
-            AController* Ctrl = CI.Char->GetController();
-            if (!Ctrl || !ObjValid(Ctrl) || !Ctrl->IsA(APlayerController::StaticClass()))
-                continue;
-
-            if (static_cast<APlayerController*>(Ctrl)->bIsLocalPlayerController)
-            {
-                if (!Local) Local = CI.Char;
-                continue;
-            }
-            return CI.Char;
-        }
-        return Local;
-        */
-
 		AGameStateBase* GS = World->AuthorityGameMode->GameState;
         for (APlayerState* PS : GS->PlayerArray)
         {
@@ -1832,7 +1811,7 @@ namespace
         {
             const float A = RandF(0.f, 2.f * kPi), R = RandF(1500.f, 3000.f);
             FVector G;
-            if (TraceDown(World, Base.X + std::cos(A) * R, Base.Y + std::sin(A) * R, Base.Z + 3000.f, -30000.f, G) && !BelowSea(G.Z))
+            if (TraceDown(World, Base.X + std::cos(A) * R, Base.Y + std::sin(A) * R, Base.Z - 200.f + 3000.f, -30000.f, G) && !BelowSea(G.Z))
                 return SpawnBotAt(World, G);
         }
         return SpawnRandomBot(World);
@@ -4479,10 +4458,9 @@ namespace
         {
             APlayerState* PS = GS->PlayerArray[i];
             if (!PS || !ObjValid(PS) || PS->bIsABot) continue;
-			CUSTOMLOG("PLAYER " + std::to_string(i) + " " + PS->GetName() + " is a real player");
             AActor* Own = PS->GetOwner();
-            if (!Own || !ObjValid(Own) || !Own->IsA(APlayerController::StaticClass())) { CUSTOMLOG("OWNER IS INVALID"); continue; }
-            if (static_cast<APlayerController*>(Own)->bIsLocalPlayerController) { CUSTOMLOG("OWNER IS LOCAL for: " + Own->GetFullName()); continue; }  // the server's ghost
+            if (!Own || !ObjValid(Own) || !Own->IsA(APlayerController::StaticClass())) { continue; }
+            if (static_cast<APlayerController*>(Own)->bIsLocalPlayerController) { continue; }  // the server's ghost
             ++Humans;
         }
         if (Humans == 0)
@@ -5566,21 +5544,20 @@ namespace Bots
             }
             return false;
         }
+        /*
         if (Func->GetName() == "ServerMove" || Func->GetName() == "ServerMoveDual" || Func->GetName() == "ServerMoveDualHybridRootMotion" || Func->GetName() == "ServerMoveOld")
         {
+            UCharacterMovementComponent* CMC = nullptr;
+
             if (Obj->IsA(UCharacterMovementComponent::StaticClass()))
             {
-                UCharacterMovementComponent* CMC = (UCharacterMovementComponent*)Obj;
+                CMC = (UCharacterMovementComponent*)Obj;
                 CMC->bIgnoreClientMovementErrorChecksAndCorrection = true;
-                /*
-                if (CMC->IsA(UTslCharacterMovement::StaticClass()))
-                {
-                    UTslCharacterMovement* STCMC = (UTslCharacterMovement*)CMC;
-                }
-                */
             }
-            return true;
+
+            if (CMC && CMC->GetOwner()->IsA(AAIController::StaticClass())) return true; else return false;
         }
+        */
         // a "match over / your result" screen for a player who is still alive while bots live: don't send it
         for (int i = 0; i < GNumResultFuncs; ++i)
         {
@@ -5809,7 +5786,7 @@ namespace Bots
                     GatherCharacters(World);
                     CountEngaged();
                     LearnAimMode();
-                    UpdateHumanAirborne(World, T);
+                    //UpdateHumanAirborne(World, T);
                     ProcessShots(T);
                     AssignHunters(T);
                     DressPass();
@@ -5842,11 +5819,13 @@ namespace Bots
                 EndGuardThink(World, T);
                 ZoneWatchThink(World, T);
                 LobbyHoldThink(World);
+                /*
                 if (GMatchSpawnDone)
                 {
                     CheckPlanes(World, T);
                     KickFromPlanes(World, T);
                 }
+                */
             }
 
             if (bSteer)

@@ -48,13 +48,15 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
 
     void HookedProcessEvent(UObject* Obj, UFunction* Func, void* Parms)
     {
-        if (Func->GetName() == "K2_OnSetMatchState")
+        if (Func->GetName() == "K2_OnRestartPlayer")
         {
-            auto Params = (Params::GameMode_K2_OnSetMatchState*)Parms;
-            if (Params->NewState.ToString() == "InProgress")
+            CUSTOMLOG("[PUBG2019PS] OnRestartPlayer by " + Obj->GetName());
+            auto Args = (Params::GameModeBase_K2_OnRestartPlayer*)Parms;
+
+            ATslCharacter* Character = (ATslCharacter*)Args->NewPlayer->K2_GetPawn();
+            for (int i = 0; i < 200; ++i)
             {
-                CUSTOMLOG("Loading airplane logic");
-                //StartAirplane();
+                Character->Health = Character->HealthMax;
             }
         }
 
@@ -63,10 +65,10 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
             UCharacterMovementComponent* CMC = (UCharacterMovementComponent*)Obj;
             CMC->bIgnoreClientMovementErrorChecksAndCorrection = true;
         }
-        
+
         if (Func->GetName() == "ServerNotifyHit")
         {
-            CUSTOMLOG("ServerNotifyHit by " + Obj->GetName());
+            CUSTOMLOG("[PUBG2019PS] ServerNotifyHit by " + Obj->GetName());
             auto Args = (Params::TslWeapon_Trajectory_ServerNotifyHit*)Parms;
 
             ATslWeapon_Trajectory* Weapon = (ATslWeapon_Trajectory*)Obj;
@@ -157,46 +159,42 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
                 HitCoefficient = 0.15f;
             }
 
+            CUSTOMLOG("Bone hit: " + Args->Impact.BoneName.ToString());
+
             AActor* ActorHit = Args->Impact.Actor.Get();
+            CUSTOMLOG("Actor hit: " + ActorHit->GetFullName());
 
-            if (ActorHit)
-            {
-                FHitResult Final{};
-                Final.Actor = Args->Impact.Actor;
-                Final.BoneName = Args->Impact.BoneName;
-                Final.Location = Args->Impact.Location;
-                Final.ImpactPoint = Args->Impact.ImpactPoint;
-                Final.PhysMaterial = Args->Impact.PhysMaterial;
-                Final.Component = Args->Impact.Component;
-                Final.ImpactNormal = Args->Impact.ImpactNormal;
+            FHitResult Final{};
+            Final.Actor = Args->Impact.Actor;
+            Final.BoneName = Args->Impact.BoneName;
+            Final.Location = Args->Impact.Location;
+            Final.ImpactPoint = Args->Impact.ImpactPoint;
+            Final.PhysMaterial = Args->Impact.PhysMaterial;
+            Final.Component = Args->Impact.Component;
+            Final.ImpactNormal = Args->Impact.ImpactNormal;
 
-                float WeaponDamage = Config.HitDamage;
+            float WeaponDamage = Config.HitDamage;
 
-                float equipmentDamageReduction = 0.0f;
+            float equipmentDamageReduction = 0.0f;
 
-                float efalloff = 0;
+            float efalloff = 0;
 
-                float multiplier = pow(Config.RangeModifier, Args->TravelDistance / Config.ReferenceDistance);
+            float multiplier = pow(Config.RangeModifier, Args->TravelDistance / Config.ReferenceDistance);
 
-                efalloff = WeaponDamage * multiplier;
+            efalloff = WeaponDamage * multiplier;
+            
+            rawDamage = efalloff;
 
-                float rawDamage = efalloff;
+            finalDamage = rawDamage * (1.0f - equipmentDamageReduction);
 
-                float finalDamage = rawDamage * (1.0f - equipmentDamageReduction);
+            ATslCharacter* OwnerChar = (ATslCharacter*)Weapon->GetPawnOwner();
+            ATslPlayerState* ownerPS = (ATslPlayerState*)OwnerChar->GetTslPlayerState();
 
-                ATslCharacter* OwnerChar = (ATslCharacter*)Weapon->GetPawnOwner();
-                ATslPlayerState* ownerPS = (ATslPlayerState*)OwnerChar->GetTslPlayerState();
+            SDK::UGameplayStatics::ApplyPointDamage(Args->Impact.Actor.Get(), finalDamage, Args->TraceStart, Final, Weapon->GetPawnOwner()->Controller, Weapon, Config.DamageType);
 
-                SDK::UGameplayStatics::ApplyPointDamage(Args->Impact.Actor.Get(), finalDamage, Args->TraceStart, Final, Weapon->GetPawnOwner()->Controller, Weapon, Config.DamageType);
+            printf("\n equipmentDamageReduction: %f \n", equipmentDamageReduction);
 
-                printf("\n equipmentDamageReduction: %f \n", equipmentDamageReduction);
-
-                printf("\n FinalDamage Test: %f \n", finalDamage);
-            }
-            else
-            {
-                CUSTOMLOG("No actor hit");
-            }
+            printf("\n FinalDamage Test: %f \n", finalDamage);
         }
 
         Bots::OnCall(Obj, Func, Parms);
@@ -545,11 +543,13 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
 
         //return 0;
 
+        /*
         while (true)
         {
             Sleep(200);
             PlaneThink(UWorld::GetWorld());
         }
+        */
     }
 
 SDK::UClass* Get_PlayerPawn_Class()
