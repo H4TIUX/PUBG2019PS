@@ -825,6 +825,47 @@ namespace
 
         UClass* CharClass = ATslCharacter::StaticClass();
 
+        ATslGameMode* GM = (ATslGameMode*)UGameplayStatics::GetGameMode(UWorld::GetWorld());
+        if (GM)
+        {
+            TArray<APawn*> Pawns;
+            GM->GetAllPawns(&Pawns);
+            if (Pawns.Num() > 0)
+            {
+                //BLOG("NUM " + Pawns.Num());
+                for (APawn* O : Pawns)
+                {
+                    if (O->IsA(CharClass))
+                    {
+                        ATslCharacter* C = static_cast<ATslCharacter*>(O);
+
+                        const bool bBot = IsBotChar(C);
+                        if (bBot && C->bHidden) {
+                            continue;   // still "skydiving"
+                        }
+
+                        GChars.push_back({ C, C->GetIndex(), C->K2_GetActorLocation(), bBot });
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+            }
+            else
+            {
+                //BLOG("No pawns to iterate through");
+                return;
+            }
+        }
+        else
+        {
+            //BLOG("GameMode is invalid");
+            return;
+        }
+
+        /*
+      
         TUObjectArray* Arr = UObject::GObjects.GetTypedPtr();
         if (!Arr)
             return;
@@ -835,7 +876,7 @@ namespace
             UObject* O = Arr->GetByIndex(i);
 
             if (!O || O->IsDefaultObject())
-				continue;
+                continue;
 
             if (O->IsA(CharClass))
             {
@@ -843,7 +884,6 @@ namespace
 
                 const bool bBot = IsBotChar(C);
                 if (bBot && C->bHidden) {
-                    CUSTOMLOG("Pawn is hidden: " + C->GetFullName());
                     continue;   // still "skydiving"
                 }
 
@@ -854,6 +894,7 @@ namespace
                 continue;
             }
         }
+        */
     }
     // Remote client first. The listen server always has its own local player pawn (the "ghost"),
     // which we only fall back to if nobody else is connected.
