@@ -22,7 +22,6 @@
 #include "../PUBG2019PS/SDK/TslGame_parameters.hpp"
 
 #include "BotLogic.h"
-#include "AirplaneLogic.h"
 
 using namespace SDK;
 
@@ -33,18 +32,8 @@ void CUSTOMLOG(std::string LOG)
 
 SDK::UClass* Get_PlayerPawn_Class();
 
-constexpr float kPi = 3.14159265f;
-
-std::string GDir;
-
-double NowSec1() { return GetTickCount64() / 1000.0; }
-
-    std::mutex  GLogMutex;
-    std::string GLogPath;
-    HANDLE      GConOut = INVALID_HANDLE_VALUE;
-
-    using ProcessEvent_t = void (*)(UObject*, UFunction*, void*);
-    ProcessEvent_t GOriginalProcessEvent = nullptr;
+using ProcessEvent_t = void (*)(UObject*, UFunction*, void*);
+ProcessEvent_t GOriginalProcessEvent = nullptr;
 
     void HookedProcessEvent(UObject* Obj, UFunction* Func, void* Parms)
     {
@@ -182,7 +171,7 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
             float multiplier = pow(Config.RangeModifier, Args->TravelDistance / Config.ReferenceDistance);
 
             efalloff = WeaponDamage * multiplier;
-            
+
             rawDamage = efalloff;
 
             finalDamage = rawDamage * (1.0f - equipmentDamageReduction);
@@ -191,10 +180,6 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
             ATslPlayerState* ownerPS = (ATslPlayerState*)OwnerChar->GetTslPlayerState();
 
             SDK::UGameplayStatics::ApplyPointDamage(Args->Impact.Actor.Get(), finalDamage, Args->TraceStart, Final, Weapon->GetPawnOwner()->Controller, Weapon, Config.DamageType);
-
-            printf("\n equipmentDamageReduction: %f \n", equipmentDamageReduction);
-
-            printf("\n FinalDamage Test: %f \n", finalDamage);
         }
 
         Bots::OnCall(Obj, Func, Parms);
@@ -210,7 +195,7 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
         static thread_local bool bInsideTick = false;
         static thread_local double LastTick = 0.0;
 
-        const double CurrentTime = NowSec1();
+        const double CurrentTime = GetTickCount64() / 1000.0;
 
         if (!bInsideTick && CurrentTime - LastTick >= 0.01)
         {
@@ -257,7 +242,7 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
             CUSTOMLOG("GetNetMode Hook ENABLE FAILED!");
             return FALSE;
         }
-        else 
+        else
         {
             CUSTOMLOG("GetNetMode Hook Enabled!");
         }
@@ -280,7 +265,7 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
             return FALSE;
 
         }
-        else 
+        else
         {
             CUSTOMLOG("AActor::GetNetMode Hook Enabled!");
         }
@@ -430,7 +415,7 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
     {
         for (ULevelStreaming* L : World->StreamingLevels) {
             if (!L) continue;
-             
+
             //if (L->GetName().contains("3")) continue;
 
             if (L->PackageName.ToString().contains("eather")) continue;
@@ -542,14 +527,6 @@ double NowSec1() { return GetTickCount64() / 1000.0; }
         //GM->MatchPreparer->TimerGameStartCountDown();
 
         //return 0;
-
-        /*
-        while (true)
-        {
-            Sleep(200);
-            PlaneThink(UWorld::GetWorld());
-        }
-        */
     }
 
 SDK::UClass* Get_PlayerPawn_Class()

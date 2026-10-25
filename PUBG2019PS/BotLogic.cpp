@@ -137,11 +137,9 @@ struct FBotSettings
     bool        Sprint = true;
     bool        UseNavMesh = true;    // auto-detected; set 0 to force straight-line moves
 
-    bool        Hotkeys = true;
     bool        VerboseLog = false;
     bool        CountAsJoined = true;    // bump the lobby "JOINED" counter (TslGameState::NumJoinPlayers) per bot
     float       SeaLevelZ = -1e9f;   // ground below SeaLevelZ + 150 is never used for spawns; -1e9 = learn it
-    std::string BotType = "ai";    // ai = AIController bots | player = CreatePlayer (CRASHES this build)
     bool        RegisterTeams = true;    // give AI bots a PUBG ATeam (+ GameMode Teams entry)
     bool        BotsInPlayerCount = true;    // keep JOINED / "X left" / alive teams = humans + bots
     bool        KeepMatchWhileBotsAlive = true; // don't let the game end the match while bots are still alive
@@ -149,11 +147,9 @@ struct FBotSettings
     float       EndWhenPlayersDead = 5.f;  // seconds after the last real player dies (or leaves) before the match ends (0 = off)
     float       ExitAfterMatch = 5.f;  // seconds after the match ends before the server process closes itself (0 = off)
     bool        NativeEndGuard = true;    // hook the game's own SetMatchState so solo + bots can't auto-finish
-    bool        FixPlaneAltitude = true;    // raise the plane's flight path if it is below PlaneMinZ
     bool        SuperheroDrop = true;    // jump only over land, then land instantly (no freefall / chute / fall damage)
     float       JumpSpread = 90.f;    // once the plane is over land, each bot jumps within this many seconds
     float       DropSpread = 150000.f; // cm - land up to this far from the point under the plane (1.5 km)
-    bool        ZoneWatch = true;    // log the blue zone's timing + keep it replicating promptly (blue zone snap debugging)
     float       VisibleFall = 5.f;     // seconds a bot is seen skydiving after jumping before it "vanishes" into its simulated drop
     float       HitCooldown = 2.5f;    // seconds after a bot hits you before it can hit you again
     float       ClaimHold = 20.f;    // seconds a player stays "taken" by the bot fighting them after it last saw them
@@ -166,7 +162,6 @@ struct FBotSettings
     float       PlaneZ = 150000.f;
     float       EjectMin = 15.f;    // seconds after boarding the plane
     float       EjectMax = 75.f;
-    bool PlayerBots() { return BotType == "player"; }
 
     // [Plane]
     bool  PlaneRoute = true;
@@ -289,11 +284,9 @@ namespace
         S.FollowZone = GetIniBool(B, "FollowZone", S.FollowZone);
         S.Sprint = GetIniBool(B, "Sprint", S.Sprint);
         S.UseNavMesh = GetIniBool(B, "UseNavMesh", S.UseNavMesh);
-        S.Hotkeys = GetIniBool(B, "Hotkeys", S.Hotkeys);
         S.VerboseLog = GetIniBool(B, "VerboseLog", S.VerboseLog);
         S.CountAsJoined = GetIniBool(B, "CountAsJoined", S.CountAsJoined);
         S.SeaLevelZ = GetIniFloat(B, "SeaLevelZ", -1e9f);
-        S.BotType = GetIniString(B, "BotType", "ai");
         S.RegisterTeams = GetIniBool(B, "RegisterTeams", S.RegisterTeams);
         S.BotsInPlayerCount = GetIniBool(B, "BotsInPlayerCount", S.BotsInPlayerCount);
         S.KeepMatchWhileBotsAlive = GetIniBool(B, "KeepMatchWhileBotsAlive", S.KeepMatchWhileBotsAlive);
@@ -301,14 +294,12 @@ namespace
         S.HoldLobbyWhenEmpty = GetIniBool(B, "HoldLobbyWhenEmpty", S.HoldLobbyWhenEmpty);
         S.ExitAfterMatch = GetIniFloat(B, "ExitAfterMatch", S.ExitAfterMatch);
         S.NativeEndGuard = GetIniBool(B, "NativeEndGuard", S.NativeEndGuard);
-        S.FixPlaneAltitude = GetIniBool(B, "FixPlaneAltitude", S.FixPlaneAltitude);
         S.SuperheroDrop = GetIniBool(B, "SuperheroDrop", S.SuperheroDrop);
         S.JumpSpread = GetIniFloat(B, "JumpSpread", S.JumpSpread);
         S.DropSpread = GetIniFloat(B, "DropSpread", S.DropSpread);
         S.LandingGrace = GetIniFloat(B, "LandingGrace", S.LandingGrace);
         S.DropTimeMin = GetIniFloat(B, "DropTimeMin", S.DropTimeMin);
         S.VisibleFall = GetIniFloat(B, "VisibleFall", S.VisibleFall);
-        S.ZoneWatch = GetIniBool(B, "ZoneWatch", S.ZoneWatch);
         S.HitCooldown = GetIniFloat(B, "HitCooldown", S.HitCooldown);
         S.ClaimHold = GetIniFloat(B, "ClaimHold", S.ClaimHold);
         S.DropTimeMax = GetIniFloat(B, "DropTimeMax", S.DropTimeMax);
@@ -316,7 +307,6 @@ namespace
         S.PlaneKickTime = GetIniFloat(B, "PlaneKickTime", S.PlaneKickTime);
         S.PlaneMinZ = GetIniFloat(B, "PlaneMinZ", S.PlaneMinZ);
         S.PlaneZ = GetIniFloat(B, "PlaneZ", S.PlaneZ);
-        for (char& c : S.BotType) c = (char)std::tolower((unsigned char)c);
         S.EjectMin = GetIniFloat(B, "EjectMin", S.EjectMin);
         S.EjectMax = GetIniFloat(B, "EjectMax", S.EjectMax);
         if (S.EjectMax < S.EjectMin) S.EjectMax = S.EjectMin;
@@ -406,31 +396,12 @@ namespace
         return &Arr->GetDecrytedObjPtr()[Index];
     }
 
-    bool ObjValid(const UObject* Obj, int32 Index)
-    {
-        /*
-        if (!Obj || Index < 0)
-            return false;
-        FUObjectItem* Item = GetItem(Index);
-        if (!Item || Item->Object != Obj)
-            return false;
-        const int32 Flags = *reinterpret_cast<const int32*>(&Item->Pad_8[0]);
-        return (Flags & (kInternalPendingKill | kInternalUnreachable)) == 0;
-        */
-        if (!Obj || Index < 0)
-            return false;
-
-        return true;
-    }
-
-    bool ObjValid(const UObject* Obj) { return Obj && ObjValid(Obj, Obj->GetIndex()); }
-
     template<typename T>
     void SetWeak(TWeakObjectPtr<T>& Weak, const UObject* Obj)
     {
         Weak.ObjectIndex = 0;
         Weak.ObjectSerialNumber = 0;
-        if (!ObjValid(Obj))
+        if (!Obj)
             return;
         FUObjectItem* Item = GetItem(Obj->GetIndex());
         const int32 Serial = *reinterpret_cast<const int32*>(&Item->Pad_8[8]); // FUObjectItem::SerialNumber
@@ -477,10 +448,6 @@ namespace
         CloseHandle(Snap);
         return BestId;
     }
-
-    std::mutex              GCmdMutex;
-    std::deque<std::string> GCmdQueue;
-    std::atomic<bool>       GHasCommands{ false };
 
     // =================================================================================
     //  Bot state
@@ -624,7 +591,6 @@ namespace
     int                        GPendingSpawns = 0;
     int                        GPendingNearSpawns = 0;
     bool                       GMatchSpawnDone = false;
-    bool                       GHasNavMesh = false;
     int                        GNextBotId = 1;
     int                        GWorkingArmStep = -1;
     double                     GLastThink = 0, GLastSteer = 0;
@@ -699,12 +665,15 @@ namespace
     // Player bots are removed through the engine (logout), AI bots are just destroyed
     void DestroyBotController(FBot& B)
     {
-        if (!ObjValid(B.Ctrl, B.CtrlIndex))
+        if (!B.Ctrl)
             return;
-        if (B.IsPC)
+
+        if (B.IsPC) {
             UGameplayStatics::RemovePlayer(static_cast<APlayerController*>(B.Ctrl), false);
-        else
+        }
+        else {
             B.Ctrl->K2_DestroyActor();
+        }
     }
 
     // =================================================================================
@@ -860,42 +829,10 @@ namespace
         }
         else
         {
-            //BLOG("GameMode is invalid");
             return;
         }
-
-        /*
-      
-        TUObjectArray* Arr = UObject::GObjects.GetTypedPtr();
-        if (!Arr)
-            return;
-
-        const int32 Num = Arr->Num();
-        for (int32 i = 0; i < Num; ++i)
-        {
-            UObject* O = Arr->GetByIndex(i);
-
-            if (!O || O->IsDefaultObject())
-                continue;
-
-            if (O->IsA(CharClass))
-            {
-                ATslCharacter* C = static_cast<ATslCharacter*>(O);
-
-                const bool bBot = IsBotChar(C);
-                if (bBot && C->bHidden) {
-                    continue;   // still "skydiving"
-                }
-
-                GChars.push_back({ C, C->GetIndex(), C->K2_GetActorLocation(), bBot });
-            }
-            else
-            {
-                continue;
-            }
-        }
-        */
     }
+
     // Remote client first. The listen server always has its own local player pawn (the "ghost"),
     // which we only fall back to if nobody else is connected.
     ATslCharacter* FindRealPlayer(UWorld* World)
@@ -914,18 +851,6 @@ namespace
     // a connected client (not the server's own local pawn)
     bool HasRemotePlayer(UWorld* World)
     {
-        //GatherCharacters(World);
-        /*
-        for (const FCharInfo& CI : GChars)
-        {
-            if (CI.IsBot) continue;
-
-            AController* C = CI.Char->Controller;
-            if (C && ObjValid(C) && C->IsA(APlayerController::StaticClass()) && !static_cast<APlayerController*>(C)->bIsLocalPlayerController)
-                return true;
-            
-        }
-        */
         AGameStateBase* GS = World->AuthorityGameMode->GameState;
         for (APlayerState* PS : GS->PlayerArray)
         {
@@ -936,100 +861,6 @@ namespace
             }
         }
         return false;
-    }
-
-    void DetectNavMesh(UWorld* World)
-    {
-        GHasNavMesh = false;
-        /*
-        if (World)
-        {
-            UClass* NavCls = ARecastNavMesh::StaticClass();
-
-            TUObjectArray* Arr = UObject::GObjects.GetTypedPtr();
-            if (!Arr)
-                return;
-
-            const int32 Num = Arr->Num();
-            for (int32 i = 0; i < Num; ++i) {
-                UObject* O = Arr->GetByIndex(i);
-                if (!O || O->IsDefaultObject())
-                    continue;
-
-                if (O && O->IsA(NavCls)) { GHasNavMesh = true; break; }
-            }
-        }
-        */
-        BLOG(std::string("Navmesh in persistent level: ") + (GHasNavMesh ? "YES (pathfinding on)" : "NO (straight-line moves)"));
-        if (!S.UseNavMesh)
-            GHasNavMesh = false;
-    }
-
-    // Full navmesh report: the navigation system, every navigation-data object loaded anywhere (any level),
-    // and the streaming levels. If a navmesh with data is found, bots switch to real pathfinding.
-    void NavCheck(UWorld* World, bool bVerbose)
-    {
-        if (!World) return;
-        UNavigationSystem* NS = World->NavigationSystem;
-        std::string L = "navcheck: navigation system ";
-        if (!NS || !ObjValid(NS)) L += "NONE (the world has no navigation system)";
-        else
-        {
-            L += "yes | main nav data " + (NS->MainNavData && ObjValid(NS->MainNavData) ? NS->MainNavData->GetName() : std::string("none")) +
-                " | registered " + std::to_string(NS->NavDataSet.Num()) + " | queued " + std::to_string(NS->NavDataRegistrationQueue.Num()) +
-                " | invokers-only " + (NS->bGenerateNavigationOnlyAroundNavigationInvokers ? "yes" : "no");
-        }
-        BLOG(L);
-
-        // every navigation data object in memory (any level, loaded or not)
-        int Found = 0;
-        ANavigationData* Best = nullptr;
-            UClass* NDC = ANavigationData::StaticClass();
-            for (int32 i = 0; i < UObject::GObjects->Num(); ++i)
-            {
-                UObject* O = UObject::GObjects->GetByIndex(i);
-                if (!O || O->IsDefaultObject() || !O->IsA(NDC)) continue;
-                ++Found;
-                std::string Outer = O->GetOuter() ? O->GetOuter()->GetName() : std::string("-");
-                std::string Pkg = O->GetOuter() && O->GetOuter()->GetOuter() ? O->GetOuter()->GetOuter()->GetName() : std::string("-");
-                if (bVerbose || Found <= 8)
-                    BLOG("navcheck:   " + O->GetClass()->GetName() + " " + O->GetName() + " in " + Outer + " (" + Pkg + ")");
-                if (!Best && O->IsA(ARecastNavMesh::StaticClass())) Best = static_cast<ANavigationData*>(O);
-            }
-        BLOG("navcheck: " + std::to_string(Found) + " navigation data object(s) loaded");
-
-        // streaming levels: anything that looks like navigation, and how many are loaded
-        int Lv = World->StreamingLevels.Num(), Loaded = 0, NavNamed = 0;
-        for (int i = 0; i < Lv; ++i)
-        {
-            ULevelStreaming* SL = World->StreamingLevels[i];
-            if (!SL || !ObjValid(SL)) continue;
-            if (SL->LoadedLevel) ++Loaded;
-            const std::string N = SL->PackageNameToLoad.ToString() + " " + SL->GetName();
-            if (Lower(N).find("nav") != std::string::npos)
-            {
-                ++NavNamed;
-                BLOG("navcheck:   streaming level " + SL->GetName() + (SL->LoadedLevel ? " (loaded)" : " (NOT loaded)"));
-            }
-        }
-        BLOG("navcheck: " + std::to_string(Lv) + " streaming levels, " + std::to_string(Loaded) + " loaded, " + std::to_string(World->Levels.Num()) +
-            " levels in the world, " + std::to_string(NavNamed) + " with 'nav' in the name");
-
-        // is there navmesh under a player / bot?
-        FVector Probe{}; bool bProbe = false;
-        for (const FCharInfo& CI : GChars) { Probe = CI.Loc; bProbe = true; if (!CI.IsBot) break; }
-        if (bProbe && NS && ObjValid(NS) && (NS->MainNavData || Best))
-        {
-            const FVector P = UNavigationSystem::ProjectPointToNavigation(World, Probe, NS->MainNavData ? NS->MainNavData : Best,
-                TSubclassOf<UNavigationQueryFilter>(nullptr), V(500.f, 500.f, 1000.f));
-            const bool bOn = !(P.X == 0.f && P.Y == 0.f && P.Z == 0.f) && Len(P - Probe) < 1500.f;
-            BLOG(std::string("navcheck: navmesh under ") + Pos(Probe) + ": " + (bOn ? "YES" : "no"));
-            if (bOn && S.UseNavMesh && !GHasNavMesh)
-            {
-                GHasNavMesh = true;
-                BLOG("navcheck: navmesh has data here - bots switch to pathfinding");
-            }
-        }
     }
 
     void CacheBones()
@@ -1118,7 +949,7 @@ namespace
     int FindGunSlot(FBot& B, UWeaponProcessorComponent*& OutWP, bool bLog)
     {
         OutWP = B.Pawn->WeaponProcessor;
-        if (!OutWP || !ObjValid(OutWP))
+        if (!OutWP)
         {
             OutWP = nullptr;
             return -1;
@@ -1129,7 +960,7 @@ namespace
         for (int32 i = 0; i < Num; ++i)
         {
             ATslWeapon* W = OutWP->EquippedWeapons[i];
-            if (!W || !ObjValid(W))
+            if (!W)
                 continue;
             if (bLog) List += " [" + std::to_string(i) + "]" + W->GetClass()->GetName();
             if (GunIdx < 0 && W->IsA(ATslWeapon_Gun::StaticClass()))
@@ -1272,7 +1103,7 @@ namespace
                 bool F = false, M = false;
                 for (const FCharInfo& CI : GChars)
                 {
-                    if (CI.IsBot || !ObjValid(CI.Char, CI.Index) || !CI.Char->CustomizableObjectInstance) continue;
+                    if (CI.IsBot || !CI.Char || !CI.Char->CustomizableObjectInstance) continue;
                     struct { void* D; int32 N; int32 Mx; } R;
                     std::memcpy(&R, &CI.Char->InstanceDescriptor, sizeof(R));
                     if (!R.D || R.N <= 0) continue;
@@ -1303,7 +1134,7 @@ namespace
             // Clients build each character's body (clothes, head, hair) by its class + gender. Bots used
             // PlayerPawn_v2_C (female) while players are a different class -> headless / naked / red ghosts on
             // some PCs. Use exactly the class a real player's character has.
-            if (GPawnFromPlayer && GPawnClass && ObjValid(GPawnClass))
+            if (GPawnFromPlayer && GPawnClass)
                 return GPawnClass;
 
             if (World)
@@ -1319,9 +1150,9 @@ namespace
 
                     if (!O || !O->IsA(ATslCharacter::StaticClass())) continue;
                     ATslCharacter* C = static_cast<ATslCharacter*>(O);
-                    if (!ObjValid(C, C->GetIndex()) || IsBotChar(C)) continue;
+                    if (!C || IsBotChar(C)) continue;
                     AController* Ct = C->GetController();
-                    if (!Ct || !ObjValid(Ct) || !Ct->IsA(APlayerController::StaticClass())) continue;
+                    if (!Ct || !Ct->IsA(APlayerController::StaticClass())) continue;
                     if (static_cast<APlayerController*>(Ct)->bIsLocalPlayerController) continue; // listen-server ghost
                     GPawnClass = C->GetClass();
                     GPawnFromPlayer = true;
@@ -1352,7 +1183,7 @@ namespace
                 GPawnClass = C;
                 return GPawnClass;
             }
-            if (GPawnClass && ObjValid(GPawnClass))
+            if (GPawnClass)
                 return GPawnClass;
             GPawnClass = UObject::FindClassFast(S.PawnClass);
             if (!GPawnClass)
@@ -1449,10 +1280,10 @@ namespace
             for (int32 k = 0; Mem && k < M->Num && k < 4; ++k)
             {
                 ATeam* T = Mem[k];
-                if (!T || !ObjValid(T)) { Line += " [invalid]"; continue; }
+                if (!T || !T) { Line += " [invalid]"; continue; }
                 Line += " [" + T->PlayerName.ToString() + " hp " + std::to_string((int)T->Health) +
                     (T->bIsDying ? " DYING" : "") + (T->bQuitter ? " QUIT" : "") +
-                    (T->TslCharacter && ObjValid(T->TslCharacter) ? " char" : " nochar") + "]";
+                    (T->TslCharacter ? " char" : " nochar") + "]";
             }
             BLOG(Line);
         }
@@ -1562,8 +1393,8 @@ namespace
                 }
             }
         }
-        if (ObjValid(B.Pawn, B.PawnIndex)) B.Pawn->Team = EncodeTeam(0);
-        if (ObjValid(Tm, B.TeamActorIndex)) Tm->K2_DestroyActor();
+        if (B.Pawn) B.Pawn->Team = EncodeTeam(0);
+        if (Tm) Tm->K2_DestroyActor();
     }
 
     // Raise UGameViewportClient::MaxSplitscreenPlayers (default 4) - not exposed in the SDK.
@@ -1596,51 +1427,8 @@ namespace
         }
     }
 
-    // A real player on the server (like the server's own local player): normal login, counted by the
-    // game, seated in the plane. Tele = where to put it once its pawn exists (nullptr = where the game puts it).
-    bool SpawnPlayerBotAt(UWorld* World, const FVector* Tele)
-    {
-        if ((int)GBots.size() >= S.MaxBots)
-        {
-            BLOG("MaxBots reached (" + std::to_string(S.MaxBots) + ")");
-            return false;
-        }
-        EnsureLocalPlayerCap();
-        APlayerController* PC = UGameplayStatics::CreatePlayer(World, -1, true);
-        if (!PC || !ObjValid(PC))
-        {
-            BLOG("CreatePlayer failed - local player limit reached?");
-            return false;
-        }
-        FBot B;
-        B.IsPC = true;
-        B.Id = GNextBotId++;
-        B.Name = S.NamePrefix + std::to_string(B.Id);
-        B.Ctrl = PC;
-        B.CtrlIndex = PC->GetIndex();
-        B.UseSteer = true; // no path following for player controllers - always input steering
-        const double T = Now();
-        B.NextArmTry = T + 1.0;
-        B.NextRoamPick = T + RandF(0.5f, 2.0f);
-        B.ProgressCheckAt = T + 2.0;
-        B.SpawnedAt = T;
-        B.PawnWaitUntil = T + 15.0;
-        if (Tele) { B.HasTeleport = true; B.TeleportTo = *Tele; }
-        if (AGameModeBase* GM = UGameplayStatics::GetGameMode(World))
-        {
-            std::wstring WName(B.Name.begin(), B.Name.end());
-            GM->ChangeName(PC, FString(WName.c_str()), false);
-        }
-        GBots.push_back(B);
-        BLOG("Created player bot " + B.Name);
-        return true;
-    }
-
     bool SpawnBotAt(UWorld* World, FVector Loc)
     {
-        if (S.PlayerBots())
-            return SpawnPlayerBotAt(World, &Loc);
-
         if ((int)GBots.size() >= S.MaxBots)
         {
             BLOG("MaxBots reached (" + std::to_string(S.MaxBots) + ")");
@@ -1728,7 +1516,7 @@ namespace
                 AGameStateBase* GSB = UGameplayStatics::GetGameState(World);
                 if (GSB)
                     for (APlayerState* Other : GSB->PlayerArray)
-                        if (Other && Other != PS && ObjValid(Other) && Other->IsA(ATslPlayerState::StaticClass()))
+                        if (Other && Other != PS && Other->IsA(ATslPlayerState::StaticClass()))
                             MaxTeam = (std::max)(MaxTeam, static_cast<ATslPlayerState*>(Other)->TeamNumber);
                 int32 Team;
                 if (S.FightEachOther)
@@ -1824,15 +1612,15 @@ namespace
     {
         if (!PS) return false;
         for (const FBot& B : GBots)
-            if (B.Ctrl && ObjValid(B.Ctrl, B.CtrlIndex) && B.Ctrl->PlayerState == PS) return true;
+            if (B.Ctrl && B.Ctrl->PlayerState == PS) return true;
         return false;
     }
 
     std::string CharName(ATslCharacter* C)
     {
-        if (!C || !ObjValid(C)) return "?";
+        if (!C) return "?";
         for (const FBot& B : GBots) if (B.Pawn == C) return B.Name;
-        if (C->GetTslPlayerState() && ObjValid(C->GetTslPlayerState())) return C->GetTslPlayerState()->PlayerName.ToString();
+        if (C->GetTslPlayerState()) return C->GetTslPlayerState()->PlayerName.ToString();
         return "a player";
     }
 
@@ -1859,7 +1647,7 @@ namespace
         {
             if (CI.IsBot) continue;
             AController* C = CI.Char->GetController();
-            if (!C || !ObjValid(C) || !C->IsA(APlayerController::StaticClass())) continue;
+            if (!C || !C->IsA(APlayerController::StaticClass())) continue;
             if (static_cast<APlayerController*>(C)->bIsLocalPlayerController) continue;
             //const FVector A = static_cast<FVector&>(CI.Char->AimOffsets);
             const FVector A = reinterpret_cast<FVector&>(CI.Char->AimOffsets);
@@ -1913,7 +1701,7 @@ namespace
 
     void StopFire(FBot& B)
     {
-        if (B.Firing && B.FiringGun && ObjValid(B.FiringGun, B.FiringGunIndex))
+        if (B.Firing && B.FiringGun && B.FiringGun)
         {
             B.FiringGun->ServerStopFire();
             if (S.ShowBotShots) B.FiringGun->ClientStopSimulatingWeaponFire();
@@ -1939,8 +1727,8 @@ namespace
         B.DestSetAt = T;
         if (B.UseSteer)
             return;
-        const EPathFollowingRequestResult R = AIC(B)->MoveToLocation(Dest, S.AcceptRadius, false,
-            GHasNavMesh, GHasNavMesh, bStrafe, TSubclassOf<UNavigationQueryFilter>(nullptr), true);
+
+        const EPathFollowingRequestResult R = AIC(B)->MoveToLocation(Dest, S.AcceptRadius, false, false, false, bStrafe, TSubclassOf<UNavigationQueryFilter>(nullptr), true);
         if (R == EPathFollowingRequestResult::Failed)
         {
             if (++B.MoveFails >= 3)
@@ -2025,8 +1813,7 @@ namespace
     bool IsGhostChar(ATslCharacter* C)
     {
         AController* Ct = C->Controller;
-        return Ct && ObjValid(Ct) && Ct->IsA(APlayerController::StaticClass()) &&
-            static_cast<APlayerController*>(Ct)->bIsLocalPlayerController;
+        return Ct && Ct->IsA(APlayerController::StaticClass()) && static_cast<APlayerController*>(Ct)->bIsLocalPlayerController;
     }
 
     ATslCharacter* NearestHuman(const FVector& Loc, float MaxDist, float& OutDist, FVector& OutLoc)
@@ -2133,13 +1920,6 @@ namespace
             }
         }
 
-        if (GHasNavMesh)
-        {
-            FVector P = UNavigationSystem::GetRandomReachablePointInRadius(World, Center, Radius, nullptr,
-                TSubclassOf<UNavigationQueryFilter>(nullptr));
-            if (!P.IsZero())
-                return P;
-        }
         const float A = RandF(0.f, 2.f * kPi), R = RandF(Radius * 0.3f, Radius);
         return Center + V(std::cos(A) * R, std::sin(A) * R, 0.f);
     }
@@ -2183,9 +1963,12 @@ namespace
         FTakeHitInfo& H = Target->LastTakeHitInfo;
         H.ActualDamage = Damage;
         H.DamageType = GDamageType;
-        APlayerState* PS = (B.Ctrl && ObjValid(B.Ctrl, B.CtrlIndex)) ? B.Ctrl->PlayerState : nullptr;
-        if (PS && ObjValid(PS) && PS->IsA(ATslPlayerState::StaticClass()))
+        APlayerState* PS = (B.Ctrl) ? B.Ctrl->PlayerState : nullptr;
+
+        if (PS && PS->IsA(ATslPlayerState::StaticClass())) {
             SetWeak(H.PlayerInstigator, PS);
+        }
+
         const FVector TL = Target->K2_GetActorLocation();
         static_cast<FVector&>(H.DamageOrigin) = From;
         static_cast<FVector&>(H.RelHitLocation) = To - TL;
@@ -2268,7 +2051,7 @@ namespace
         const FVector From = MyLoc + V(0.f, 0.f, 60.f);
         // only body parts the bot can actually see can be hit - fully behind cover = a guaranteed miss
         FVector HeadP = TLoc + V(0.f, 0.f, 70.f), BodyP = TLoc + V(0.f, 0.f, 20.f);
-        if (Target->Mesh && ObjValid(Target->Mesh))
+        if (Target->Mesh)
         {
             HeadP = Target->Mesh->GetSocketLocation(GHeadBone);
             BodyP = Target->Mesh->GetSocketLocation(GSpineBone);
@@ -2316,10 +2099,10 @@ namespace
         const float Before = Target->Health;
         const uint8 RepBefore = Target->LastTakeHitInfo.EnsureReplicationByte;
         APlayerState* VPS = Target->GetTslPlayerState();
-        ATslPlayerState* VTPS = (VPS && ObjValid(VPS) && VPS->IsA(ATslPlayerState::StaticClass())) ? static_cast<ATslPlayerState*>(VPS) : nullptr;
+        ATslPlayerState* VTPS = (VPS && VPS->IsA(ATslPlayerState::StaticClass())) ? static_cast<ATslPlayerState*>(VPS) : nullptr;
         const float LastHitBefore = VTPS ? VTPS->LastHitTime : 0.f;
         UGameplayStatics::ApplyPointDamage(Target, Dmg, Dir, Hit, B.Ctrl, Gun, GDamageType);
-        const float After = ObjValid(Target) ? Target->Health : 0.f;
+        const float After = Target ? Target->Health : 0.f;
         if (After < Before && !IsBotChar(Target)) B.LastHitPlayerAt = Tn;
         if (After < Before && IsBotChar(Target)) GBotHurtByBotAt[Target->GetIndex()] = Tn;
         if (S.ScheduledHits && ++B.WindowHits >= B.WindowHitsMax)
@@ -2330,7 +2113,7 @@ namespace
             B.WindowRolled = false;
         }
         // "attacked from here": the player state's attack marker (whatever UI this build drives from it)
-        if (VTPS && ObjValid(VTPS) && After < Before)
+        if (VTPS && After < Before)
         {
             static int MarkLogs = 0;
             const bool bGameDidIt = VTPS->LastHitTime != LastHitBefore;
@@ -2343,7 +2126,7 @@ namespace
             if (MarkLogs < 2) { ++MarkLogs; BLOG(std::string("Attack marker: ") + (bGameDidIt ? "the game sets it itself" : "set by us") + " for this hit"); }
         }
         // the game didn't fill its replicated hit info for this hit -> do it, so the victim sees blood / the hit marker
-        if (ObjValid(Target) && After < Before && Target->LastTakeHitInfo.EnsureReplicationByte == RepBefore)
+        if (Target && After < Before && Target->LastTakeHitInfo.EnsureReplicationByte == RepBefore)
             ReplicateHitInfo(B, Target, Before - After, From, To, Hit.BoneName, After <= 0.f);
 
         if (After < Before) ++GHitsApplied;
@@ -2363,8 +2146,9 @@ namespace
     // tell every client "this gun fired toward To" - muzzle flash, sound, tracer (cosmetic only)
     void SimShot(ATslWeapon_Gun* Gun, const FVector& From, const FVector& To)
     {
-        if (!S.ShowBotShots || !Gun || !ObjValid(Gun))
+        if (!S.ShowBotShots || !Gun)
             return;
+
         const FVector Dir = SafeNormal(To - From);
         FHitResult Hit{};
         Hit.bBlockingHit = 1;
@@ -2394,7 +2178,7 @@ namespace
     void TakeShot(FBot& B, ATslWeapon_Gun* Gun, ATslCharacter* Target, const FVector& MyLoc, const FVector& TLoc, float Dist)
     {
         bool bHit = false;
-        if (S.OwnHitRoll && ObjValid(Target) && Target->Health > 0.f)
+        if (S.OwnHitRoll && Target && Target->Health > 0.f)
             bHit = RollHit(B, Gun, Target, MyLoc, TLoc, Dist);
         ++B.ShotsThisEngage;
         B.LastEngageShot = Now();
@@ -2429,7 +2213,7 @@ namespace
             {
                 CacheBones();
                 FVector HeadP = TLoc + V(0.f, 0.f, 70.f), BodyP = TLoc + V(0.f, 0.f, 20.f);
-                if (Target->Mesh && ObjValid(Target->Mesh))
+                if (Target->Mesh)
                 {
                     HeadP = Target->Mesh->GetSocketLocation(GHeadBone);
                     BodyP = Target->Mesh->GetSocketLocation(GSpineBone);
@@ -2505,18 +2289,22 @@ namespace
     void EnterDead(FBot& B, double T)
     {
         StopFire(B);
-        if (ObjValid(B.Ctrl, B.CtrlIndex))
+
+        if (B.Ctrl)
         {
             if (AIC(B)) AIC(B)->K2_ClearFocus();
             B.Ctrl->StopMovement();
         }
+
         B.State = EBotState::Dead;
         B.DiedAt = T;
-        if (B.TeamActor && ObjValid(B.TeamActor, B.TeamActorIndex))
+
+        if (B.TeamActor)
         {
             B.TeamActor->Health = 0;
             B.TeamActor->bIsDying = 1;
         }
+
         B.Target = nullptr;
         if (S.VerboseLog) BLOG(B.Name + " died");
     }
@@ -2569,7 +2357,7 @@ namespace
             if (B.State == EBotState::Combat && B.Target && B.TargetIndex >= 0)
             {
                 ++GEngaged[B.TargetIndex];
-                if (ObjValid(B.Target, B.TargetIndex) && !IsBotChar(B.Target) && B.PawnIndex >= 0)
+                if (B.Target && !IsBotChar(B.Target) && B.PawnIndex >= 0)
                     GEngagingHuman.insert(B.PawnIndex);
             }
     }
@@ -2794,7 +2582,7 @@ namespace
 
     void UpdateBot(UWorld* World, FBot& B, double T)
     {
-        if (!ObjValid(B.Ctrl, B.CtrlIndex))
+        if (!B.Ctrl)
         {
             CUSTOMLOG("UpdateBot: Pawn's controller is invalid");
             B.Remove = true;
@@ -2805,7 +2593,7 @@ namespace
         {
             // player bots: the game spawns the pawn (now or a bit later) - pick it up / follow changes
             APawn* Cur = B.Ctrl->K2_GetPawn();
-            if (Cur && Cur != B.Pawn && ObjValid(Cur) && Cur->IsA(ATslCharacter::StaticClass()))
+            if (Cur && Cur != B.Pawn && Cur->IsA(ATslCharacter::StaticClass()))
             {
                 B.Pawn = static_cast<ATslCharacter*>(Cur);
                 B.PawnIndex = Cur->GetIndex();
@@ -2898,7 +2686,7 @@ namespace
                         continue;
                     ATransportAircraftVehicle* Plane = static_cast<ATransportAircraftVehicle*>(O);
                     UTslVehicleSeatComponent* Seat = Plane->VehicleSeatComponent;
-                    if (!Seat || !ObjValid(Seat))
+                    if (!Seat)
                         continue;
                     TArray<ATslCharacter*> Riders = Seat->GetRiders();
                     bool bMine = false;
@@ -2967,7 +2755,7 @@ namespace
         B.EjectTries = 0;
 
         AActor* Chute = (AActor*)Me->ParachuteType;
-        const bool bChute = Chute && ObjValid(Chute);
+        const bool bChute = Chute;
 
         if (B.DropPending && T >= B.NextDropTry)
         {
@@ -2995,7 +2783,7 @@ namespace
             ++B.DropTries;
             // done once it is no longer on a parachute / falling from height
             AActor* After = (AActor*)Me->ParachuteType;
-            const bool bStillChute = After && ObjValid(After) && !Me->IsInAircraft() && Me->IsFallingWithParachute();
+            const bool bStillChute = After && !Me->IsInAircraft() && Me->IsFallingWithParachute();
             if (!bStillChute || B.DropTries >= 4)
             {
                 B.DropPending = false;
@@ -3103,7 +2891,7 @@ namespace
                 {
                     BLOG(B.Name + " kept landing in water - removing it");
                     UnregisterBotTeam(World, B);
-                    if (ObjValid(B.Pawn, B.PawnIndex)) B.Pawn->K2_DestroyActor();
+                    if (B.Pawn) B.Pawn->K2_DestroyActor();
                     UncountJoin(B);
                     DestroyBotController(B);
                     B.Remove = true;
@@ -3543,7 +3331,7 @@ namespace
 
         for (FBot& B : GBots)
         {
-            if (!B.UseSteer || !B.HasDest || B.State == EBotState::Dead || !ObjValid(B.Pawn, B.PawnIndex))
+            if (!B.UseSteer || !B.HasDest || B.State == EBotState::Dead || !B.Pawn)
                 continue;
 
             if (B.Pawn->IsInAircraft() || B.Pawn->IsFallingWithParachute())
@@ -3559,7 +3347,7 @@ namespace
             }
             const FVector Dir = (Now() < B.DetourUntil) ? B.DetourDir : SafeNormal(Delta);
             B.Pawn->AddMovementInput(Dir, 1.f, false);
-            if (B.State == EBotState::Combat && B.Target && ObjValid(B.Target, B.TargetIndex))
+            if (B.State == EBotState::Combat && B.Target)
             {
                 const FVector TL = B.Target->K2_GetActorLocation();
                 const float Yaw = std::atan2(TL.Y - Loc.Y, TL.X - Loc.X) * 180.f / kPi;
@@ -3568,7 +3356,7 @@ namespace
             else if (B.State != EBotState::Combat)
             {
                 const FRotator Face = UKismetMathLibrary::FindLookAtRotation(Loc, Loc + Dir * 100.f);
-                if (B.IsPC && ObjValid(B.Ctrl, B.CtrlIndex))
+                if (B.IsPC && B.Ctrl)
                     B.Ctrl->SetControlRotationBP(Face);
                 else
                     B.Pawn->K2_SetActorRotation(Face, false);
@@ -3584,7 +3372,7 @@ namespace
             UnregisterBotTeam(GWorld, B);
             UncountJoin(B);
             StopFire(B);
-            if (ObjValid(B.Pawn, B.PawnIndex)) B.Pawn->K2_DestroyActor();
+            if (B.Pawn) B.Pawn->K2_DestroyActor();
             DestroyBotController(B);
             ++N;
         }
@@ -3606,7 +3394,6 @@ namespace
         if (!World)
             return;
 
-        DetectNavMesh(World);
         if (!S.DamageTypeClass.empty())
         {
             UClass* DT = UObject::FindClassFast(S.DamageTypeClass);
@@ -3667,31 +3454,6 @@ namespace
         ApplySettings(World);
     }
 
-    // =================================================================================
-    //  Commands
-    // =================================================================================
-    void PrintHelp()
-    {
-        BLOG("Commands (type in this console):");
-        BLOG("  bots [N]    spawn N bots (lobby: where players spawn / in match: random land points)");
-        BLOG("  bot [N]     spawn N bots next to a connected player (default 1)");
-        BLOG("  killbots    remove all bots");
-        BLOG("  freeze      pause / resume bot AI");
-        BLOG("  status      bot count, nav mode, tick rate, damage stats, game player counters");
-        BLOG("  where       every character on the server and its position (find your bot)");
-        BLOG("  teams       what the GAME has in its team list (who it counts as players)");
-        BLOG("  start [N]   lobby: start the match in N seconds (default 5)");
-        BLOG("  weapons     list gun classes bots can be given");
-        BLOG("  reload      re-read [Bots] from settings.ini");
-        BLOG("  nativebot   EXPERIMENTAL: call the game's own UTslCheatManager::SpawnBot()");
-        BLOG("  trace       print the last game function calls (debug)");
-        BLOG("  lookdump    compare a player's and a bot's character data (appearance debug)");
-        BLOG("  navcheck    report navmesh / navigation data loaded anywhere (and use it if found)");
-        BLOG("  botflag 0|1 clear / set the 'is a bot' flag on all bots live (appearance test)");
-        BLOG("  lookupdate  run the game's appearance rebuild on all bots (appearance test)");
-        BLOG("Hotkeys (server window focused): F5 bot  F6 bots  F7 killbots  F8 freeze");
-    }
-
     void PrintStatus()
     {
         int Alive = 0, Armed = 0, Combat = 0, Steer = 0;
@@ -3706,7 +3468,7 @@ namespace
         BLOG("bots alive " + std::to_string(Alive) + "/" + std::to_string(GBots.size()) +
             " | armed " + std::to_string(Armed) + " | in combat " + std::to_string(Combat) +
             " | input-steering " + std::to_string(Steer) + " | pending " + std::to_string(GPendingSpawns + GPendingNearSpawns));
-        BLOG(std::string("navmesh ") + (GHasNavMesh ? "yes" : "no") + " | frozen " + (GFrozen ? "yes" : "no") +
+        BLOG(std::string("frozen ") + (GFrozen ? "yes" : "no") +
             " | hook calls/s " + std::to_string((int)GTickRate) + " | gun classes " + std::to_string(GWeapons.size()) +
             " | hits applied " + std::to_string(GHitsApplied) + " no-effect " + std::to_string(GHitsNoEffect));
     }
@@ -3752,17 +3514,19 @@ namespace
             else
             {
                 AController* C = CI.Char->Controller;
-                if (C && ObjValid(C) && C->IsA(APlayerController::StaticClass()))
+                if (C && C->IsA(APlayerController::StaticClass()))
                     What = static_cast<APlayerController*>(C)->bIsLocalPlayerController ? "SERVER'S OWN LOCAL PAWN (the ghost)" : "real player";
                 else
                     What = C ? "AI / other controller" : "no controller";
-                if (C && C->PlayerState && ObjValid(C->PlayerState))
+                if (C && C->PlayerState)
                     What += " '" + C->PlayerState->PlayerName.ToString() + "'";
             }
             std::string Team;
             AController* TC = CI.Char->GetController();
-            if (TC && ObjValid(TC) && TC->PlayerState && ObjValid(TC->PlayerState) && TC->PlayerState->IsA(ATslPlayerState::StaticClass()))
+
+            if (TC && TC->PlayerState && TC->PlayerState->IsA(ATslPlayerState::StaticClass()))
                 Team = " team " + std::to_string(static_cast<ATslPlayerState*>(TC->PlayerState)->TeamNumber);
+
             BLOG("  " + What + Team + (CI.Char->GetTeam() ? " (ATeam yes)" : " (ATeam NO)") + " at " + Pos(CI.Loc) + " hp " + std::to_string((int)CI.Char->Health));
         }
         PrintGameCounters(World);
@@ -3789,11 +3553,11 @@ namespace
             // controller is busy with the seat (counting only PlayerController-possessed characters
             // read 0 humans in the plane and the solo match ended)
             AController* C = CI.Char->Controller;
-            const bool bPC = C && ObjValid(C) && C->IsA(APlayerController::StaticClass());
-            if (C && ObjValid(C) && !bPC) continue; // some other AI - not a player
+            const bool bPC = C && C->IsA(APlayerController::StaticClass());
+            if (C && !bPC) continue; // some other AI - not a player
             if (bPC && static_cast<APlayerController*>(C)->bIsLocalPlayerController) continue; // listen-server ghost
             APlayerState* PS = bPC ? C->PlayerState : CI.Char->GetTslPlayerState();
-            if (!bPC && !(PS && ObjValid(PS)) && !CI.Char->IsInAircraft()) continue;
+            if (!bPC && !(PS) && !CI.Char->IsInAircraft()) continue;
             ++Humans;
             if (PS->IsA(ATslPlayerState::StaticClass()))
                 AddTeam(static_cast<ATslPlayerState*>(PS)->TeamNumber);
@@ -3805,11 +3569,11 @@ namespace
             int HumansPS = 0;
             for (APlayerState* PS : GS->PlayerArray)
             {
-                if (!PS || !ObjValid(PS) || PS->bIsABot || !PS->IsA(ATslPlayerState::StaticClass())) continue;
+                if (!PS || PS->bIsABot || !PS->IsA(ATslPlayerState::StaticClass())) continue;
                 ATslPlayerState* TPS = static_cast<ATslPlayerState*>(PS);
                 if (TPS->bKilled || TPS->bQuitter) continue;
                 AActor* Own = PS->GetOwner();
-                if (!Own || !ObjValid(Own) || !Own->IsA(APlayerController::StaticClass())) continue;
+                if (!Own || !Own->IsA(APlayerController::StaticClass())) continue;
                 if (static_cast<APlayerController*>(Own)->IsLocalPlayerController()) continue; // listen-server ghost
                 ++HumansPS;
                 AddTeam(TPS->TeamNumber);
@@ -3819,10 +3583,9 @@ namespace
         int Bots = 0;
         for (const FBot& B : GBots)
         {
-            if (B.State == EBotState::Dead || !ObjValid(B.Pawn, B.PawnIndex) || B.Pawn->Health <= 0.f) continue;
+            if (B.State == EBotState::Dead || !(B.Pawn) || B.Pawn->Health <= 0.f) continue;
             ++Bots;
-            if (B.Ctrl && ObjValid(B.Ctrl, B.CtrlIndex) && B.Ctrl->PlayerState && ObjValid(B.Ctrl->PlayerState) &&
-                B.Ctrl->PlayerState->IsA(ATslPlayerState::StaticClass()))
+            if (B.Ctrl && B.Ctrl->PlayerState && B.Ctrl->PlayerState->IsA(ATslPlayerState::StaticClass()))
                 AddTeam(static_cast<ATslPlayerState*>(B.Ctrl->PlayerState)->TeamNumber);
             else
                 AddTeam(-2000 - B.Id);
@@ -3845,7 +3608,7 @@ namespace
             // lobby: everyone the game counted (logged-in player states) + our bots
             int Joined = 0;
             for (APlayerState* PS : GS->PlayerArray)
-                if (PS && ObjValid(PS) && !PS->bIsABot && !IsBotPS(PS)) ++Joined;
+                if (PS && !PS->bIsABot && !IsBotPS(PS)) ++Joined;
             GWantJoined = Joined + Bots;
         }
         else
@@ -3865,7 +3628,7 @@ namespace
     // ProcessEvent call on the game thread so ours is the last value before replication.
     void ApplyCounters()
     {
-        if (!GHaveCounts || !GCountGS || !ObjValid(GCountGS, GCountGSIndex))
+        if (!GHaveCounts || !GCountGS)
             return;
 
         if (!GCountsInMatch)
@@ -3888,138 +3651,6 @@ namespace
             GLastWroteAlive = GWantAlive;
             GLastWroteTeams = GWantTeams;
         }
-    }
-
-    // Log every plane once, and lift its flight path if it flies low (plane in the water)
-    void CheckPlanes(UWorld* World, double T)
-    {
-        if (T < GNextPlaneCheck || !World)
-            return;
-
-        GNextPlaneCheck = T + 1.0;
-        TUObjectArray* Arr = UObject::GObjects.GetTypedPtr();
-        if (!Arr)
-            return;
-
-        const int32 Num = Arr->Num();
-        for (int32 i = 0; i < Num; ++i) {
-            UObject* O = Arr->GetByIndex(i);
-            if (O->IsDefaultObject())
-                continue;
-
-            if (!O->IsA(ATransportAircraftVehicle::StaticClass()))
-                continue;
-
-            if (std::find(GPlanesSeen.begin(), GPlanesSeen.end(), O->GetIndex()) != GPlanesSeen.end())
-                continue;
-
-            GPlanesSeen.push_back(O->GetIndex());
-            ATslAircraftVehicle* Plane = static_cast<ATslAircraftVehicle*>(O);
-            const FVector P = Plane->K2_GetActorLocation();
-            BLOG("plane at " + Pos(P) + " (Z " + std::to_string((int)(P.Z / 100.f)) + " m)");
-            if (!S.FixPlaneAltitude || !Plane->SplineComponent || !ObjValid(Plane->SplineComponent))
-            {
-                CUSTOMLOG("Spotted plane is invalid");
-                continue;
-            }
-            USplineComponent* Spl = Plane->SplineComponent;
-            const int32 N = Spl->GetNumberOfSplinePoints();
-            int Raised = 0;
-            float MinZ = 1e9f;
-            for (int32 i = 0; i < N && i < 64; ++i)
-            {
-                FVector SP = Spl->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World);
-                MinZ = (std::min)(MinZ, SP.Z);
-                if (SP.Z < S.PlaneMinZ)
-                {
-                    SP.Z = S.PlaneZ;
-                    Spl->SetLocationAtSplinePoint(i, SP, ESplineCoordinateSpace::World, i == N - 1);
-                    ++Raised;
-                }
-            }
-            BLOG("plane flight path: " + std::to_string(N) + " points, lowest Z " + std::to_string((int)(MinZ / 100.f)) + " m" +
-                (Raised ? (" - raised " + std::to_string(Raised) + " point(s) to " + std::to_string((int)(S.PlaneZ / 100.f)) + " m") : std::string()));
-            if (P.Z < S.PlaneMinZ)
-            {
-                AActor* A = (AActor*)O;
-                FHitResult Hit{};
-                A->K2_SetActorLocation(V(P.X, P.Y, S.PlaneZ), false, &Hit, true);
-                BLOG("plane was low - moved up to " + std::to_string((int)(S.PlaneZ / 100.f)) + " m");
-            }
-        }
-
-    }
-
-    // The plane mod's plane never reaches the end of its route, so nobody is ever forced out.
-    // After PlaneKickTime: eject everyone (the game's own EjectAll, then per-rider as backup),
-    // waiting for land under the plane for up to 60 s more.
-    // ---------------------------------------------------------------- blue zone watch
-    // The gas sometimes closes part way on players' screens, then snaps to the new circle. Neither DLL touches
-    // the zone, so: log the server's own timing (to compare with what players see), push the game state out
-    // promptly while the gas moves, and log server hitches (game time falling behind real time).
-
-    void ZoneWatchThink(UWorld* World, double T)
-    {
-        if (!S.ZoneWatch) return;
-        AGameStateBase* GSB = World->AuthorityGameMode->GameState;
-        if (!GSB || !GSB->IsA(ATslGameState::StaticClass())) return;
-        ATslGameState* GS = static_cast<ATslGameState*>(GSB);
-        const float GameT = UGameplayStatics::GetTimeSeconds(World);
-
-        if (!GZoneNetTuned)
-        {
-            GZoneNetTuned = true;
-            char Buf[200];
-            snprintf(Buf, sizeof(Buf), "Zone watch: game state net priority %.1f, update rate %.0f/s -> %.1f, %.0f/s",
-                GS->NetPriority, GS->NetUpdateFrequency, (std::max)(GS->NetPriority, 5.f), (std::max)(GS->NetUpdateFrequency, 10.f));
-            BLOG(Buf);
-            GS->NetPriority = (std::max)(GS->NetPriority, 5.f);
-            GS->NetUpdateFrequency = (std::max)(GS->NetUpdateFrequency, 10.f);
-        }
-
-        // server hitches: biggest gap between AI thinks, and game time vs real time, per 30 s
-        if (GPerfLastThink > 0) GPerfMaxGap = (std::max)(GPerfMaxGap, T - GPerfLastThink);
-        GPerfLastThink = T;
-        if (GPerfWinStart <= 0) { GPerfWinStart = T; GPerfWinGame = GameT; }
-        else if (T - GPerfWinStart >= 30.0)
-        {
-            const double Real = T - GPerfWinStart, Game = GameT - GPerfWinGame;
-            if (GPerfMaxGap > 0.5 || Game < Real * 0.95)
-            {
-                char Buf[200];
-                snprintf(Buf, sizeof(Buf), "Server perf: last %.0f s real = %.1f s game time, worst stall %.2f s", Real, Game, GPerfMaxGap);
-                BLOG(Buf);
-            }
-            GPerfWinStart = T; GPerfWinGame = GameT; GPerfMaxGap = 0;
-        }
-
-        const bool bRel = GS->bIsGasRelease;
-        char Buf[300];
-        if (bRel && !GZoneWasReleasing)
-        {
-            GZoneStartReal = T; GZoneStartGame = GameT; GZoneNextLog = T + 15.0;
-            snprintf(Buf, sizeof(Buf), "Zone: gas starts closing - from %.0f m to %.0f m radius, game says it takes %.0f s (match time %.0f s)",
-                GS->SafetyZoneBeginRadius / 100.f, GS->PoisonGasWarningRadius / 100.f, GS->TotalReleaseDuration, T - GMatchStartedAt);
-            BLOG(Buf);
-            GS->ForceNetUpdate();
-        }
-        else if (!bRel && GZoneWasReleasing)
-        {
-            snprintf(Buf, sizeof(Buf), "Zone: gas finished closing after %.0f s real / %.0f s game time (game said %.0f s) - blue now %.0f m",
-                T - GZoneStartReal, GameT - GZoneStartGame, GS->TotalReleaseDuration, GS->SafetyZoneRadius / 100.f);
-            BLOG(Buf);
-            GS->ForceNetUpdate();
-        }
-        else if (bRel && T >= GZoneNextLog)
-        {
-            GZoneNextLog = T + 15.0;
-            snprintf(Buf, sizeof(Buf), "Zone: closing %.0f/%.0f s (real %.0f s) - blue %.0f m (lerp %.0f m), target %.0f m",
-                GS->ElapsedReleaseDuration, GS->TotalReleaseDuration, T - GZoneStartReal,
-                GS->SafetyZoneRadius / 100.f, GS->LerpSafetyZoneRadius / 100.f, GS->PoisonGasWarningRadius / 100.f);
-            BLOG(Buf);
-        }
-        if (bRel && T >= GZoneNextPush) { GZoneNextPush = T + 1.0; GS->ForceNetUpdate(); }
-        GZoneWasReleasing = bRel;
     }
 
     void KickFromPlanes(UWorld* World, double T)
@@ -4047,7 +3678,8 @@ namespace
 
             ATransportAircraftVehicle* Plane = static_cast<ATransportAircraftVehicle*>(O);
             UTslVehicleSeatComponent* Seat = Plane->VehicleSeatComponent;
-            if (!Seat || !ObjValid(Seat))
+
+            if (!Seat)
                 continue;
 
             TArray<ATslCharacter*> Riders = Seat->GetRiders();
@@ -4065,7 +3697,7 @@ namespace
             }
             Plane->EjectAll();
             for (ATslCharacter* R : Riders)
-                if (R && ObjValid(R) && R->IsInAircraft())
+                if (R && R->IsInAircraft())
                     Seat->TryToLeave(R, true);
         }
     }
@@ -4457,9 +4089,9 @@ namespace
         for (int i = 0; i < GS->PlayerArray.Num(); ++i)
         {
             APlayerState* PS = GS->PlayerArray[i];
-            if (!PS || !ObjValid(PS) || PS->bIsABot) continue;
+            if (!PS || PS->bIsABot) continue;
             AActor* Own = PS->GetOwner();
-            if (!Own || !ObjValid(Own) || !Own->IsA(APlayerController::StaticClass())) { continue; }
+            if (!Own || !Own->IsA(APlayerController::StaticClass())) { continue; }
             if (static_cast<APlayerController*>(Own)->bIsLocalPlayerController) { continue; }  // the server's ghost
             ++Humans;
         }
@@ -4604,7 +4236,7 @@ namespace
                 std::vector<std::pair<float, FBot*>> Near;
                 for (FBot& B : GBots)
                 {
-                    if (B.State != EBotState::Roam || !ObjValid(B.Pawn, B.PawnIndex)) continue;
+                    if (B.State != EBotState::Roam || B.Pawn) continue;
                     const float D = Len(Sh.Loc - B.Pawn->K2_GetActorLocation());
                     if (D <= S.HearingDistance) Near.push_back({ D, &B });
                 }
@@ -4661,8 +4293,10 @@ namespace
     void DressCharacter(ATslCharacter* C, const std::string& Who)
     {
         AInventoryFacade* Inv = C->GetInventoryFacade();
-        if (!Inv || !ObjValid(Inv) || !Inv->GetEquipment() || !ObjValid(Inv->GetEquipment()))
+
+        if (!Inv || !Inv->GetEquipment())
             return;
+
         AEquipment* Eq = Inv->GetEquipment();
         std::string Put;
         for (const FClothSlot& Sl : GClothes)
@@ -4707,7 +4341,7 @@ namespace
         for (FBot& B : GBots)
         {
             if (Done >= 4) break;
-            if (B.State == EBotState::Dead || !ObjValid(B.Pawn, B.PawnIndex) || GAppearanced.count(B.PawnIndex)) continue;
+            if (B.State == EBotState::Dead || !B.Pawn || GAppearanced.count(B.PawnIndex)) continue;
             AMutableCharacter* M = B.Pawn;
             FRawArray R; std::memcpy(&R, &M->InstanceDescriptor, sizeof(R));
             if (R.Data && R.Num > 0) { GAppearanced.insert(B.PawnIndex); continue; } // already has one
@@ -4843,12 +4477,13 @@ namespace
     ATslCharacter* FindLookTemplate(int G)
     {
         ATslCharacter* Fallback = nullptr;
+
         for (const FCharInfo& CI : GChars)
         {
-            if (CI.IsBot || !ObjValid(CI.Char, CI.Index)) continue;
+            if (CI.IsBot || !CI.Char) continue;
             ATslCharacter* C = CI.Char;
             if (((uint8)C->Gender ? 1 : 0) != G) continue;
-            if (!C->CustomizableObjectInstance || !ObjValid(C->CustomizableObjectInstance)) continue;
+            if (!C->CustomizableObjectInstance) continue;
             uint8* D; int N;
             if (!GetLook(C, D, N)) continue;
             if (!IsGhostChar(C)) return C;
@@ -4889,7 +4524,7 @@ namespace
         ATslCharacter* Tpl[2] = { FindLookTemplate(0), FindLookTemplate(1) };
         for (FBot& B : GBots)
         {
-            if (B.State == EBotState::Dead || !ObjValid(B.Pawn, B.PawnIndex)) continue;
+            if (B.State == EBotState::Dead || !B.Pawn) continue;
             ATslCharacter* P = B.Pawn;
             if (!P->CustomizableObjectInstance) continue;                     // not a player-body class
             if (S.DressBots && !GDressed.count(B.PawnIndex)) continue;         // wait until it's dressed
@@ -4992,7 +4627,7 @@ namespace
         const int Want = S.HuntersPerPlayer * Humans;
         int Have = 0;
         for (const FBot& B : GBots)
-            if (B.Hunter && B.State != EBotState::Dead && !B.Remove && ObjValid(B.Pawn, B.PawnIndex)) ++Have;
+            if (B.Hunter && B.State != EBotState::Dead && !B.Remove && B.Pawn) ++Have;
         // a hunter died: wait before sending the next one
         if (GFirstWaveDone && Have < GHuntersLast && S.HunterRefillDelay > 0.f)
         {
@@ -5006,7 +4641,7 @@ namespace
         std::vector<FBot*> Cand;
         for (FBot& B : GBots)
         {
-            if (B.State == EBotState::Dead || B.Remove || !ObjValid(B.Pawn, B.PawnIndex)) continue;
+            if (B.State == EBotState::Dead || B.Remove || !B.Pawn) continue;
             if (B.Hunter) { ++Have; continue; }
             if (B.Pawn->IsInAircraft() || B.DropPending || B.Pawn->IsFallingWithParachute() || T < B.NoFireUntil) continue; // not landed yet
             Cand.push_back(&B);
@@ -5077,204 +4712,6 @@ namespace
             BLOG("  " + W.WeaponName + "   (item " + W.ItemName + ")");
     }
 
-    void RunCommand(UWorld* World, const std::string& Line)
-    {
-        std::stringstream SS(Line);
-        std::string Cmd;
-        SS >> Cmd;
-        Cmd = Lower(Cmd);
-        int N = -1;
-        SS >> N;
-
-        if (Cmd == "help" || Cmd == "?")       PrintHelp();
-        else if (Cmd == "bots")
-        {
-            const int Want = N > 0 ? N : S.Count;
-            if ((S.PlayerBots() || S.RegisterTeams) && !GMatchSpawnDone)
-                GPendingLobbySpawns += Want;
-            else
-                GPendingSpawns += Want;
-            BLOG("Queued " + std::to_string(Want) + " bots");
-        }
-        else if (Cmd == "bot")
-        {
-            GPendingNearSpawns += N > 0 ? N : 1;
-        }
-        else if (Cmd == "killbots" || Cmd == "removebots") RemoveAllBots();
-        else if (Cmd == "freeze")
-        {
-            GFrozen = !GFrozen;
-            if (GFrozen)
-                for (FBot& B : GBots)
-                    if (ObjValid(B.Ctrl, B.CtrlIndex)) { StopFire(B); B.Ctrl->StopMovement(); B.HasDest = false; }
-            BLOG(std::string("Bots ") + (GFrozen ? "FROZEN" : "resumed"));
-        }
-        else if (Cmd == "status") {
-            PrintStatus(); PrintGameCounters(World);
-            BLOG("end guard: " + GGuardWhat + " | match ends held " + std::to_string(GHeldEnds) + "x");
-        }
-        else if (Cmd == "trace")               DumpTrace("(trace command)");
-        else if (Cmd == "botflag")
-        {
-            const bool bOn = N == 1;
-            int N = 0;
-            for (FBot& B : GBots)
-            {
-                if (!B.Ctrl || !ObjValid(B.Ctrl, B.CtrlIndex) || !B.Ctrl->PlayerState) continue;
-                B.Ctrl->PlayerState->bIsABot = bOn ? 1 : 0;
-                B.Ctrl->PlayerState->ForceNetUpdate();
-                ++N;
-            }
-            BLOG("botflag: bIsABot = " + std::string(bOn ? "1" : "0") + " on " + std::to_string(N) + " bots (watch how they look now)");
-        }
-        else if (Cmd == "navcheck")
-        {
-            GatherCharacters(World);
-            NavCheck(World, true);
-        }
-        else if (Cmd == "lookupdate")
-        {
-            int N = 0;
-            for (FBot& B : GBots)
-                if (B.State != EBotState::Dead && ObjValid(B.Pawn, B.PawnIndex)) { B.Pawn->UpdateAppearence(); B.Pawn->ForceNetUpdate(); ++N; }
-            BLOG("lookupdate: UpdateAppearence on " + std::to_string(N) + " bots");
-        }
-        else if (Cmd == "lookdump")
-        {
-            GatherCharacters(World);
-            int Humans = 0, BotsShown = 0;
-            for (const FCharInfo& CI : GChars)
-            {
-                if (CI.IsBot ? BotsShown >= 2 : Humans >= 2) continue;
-                CI.IsBot ? ++BotsShown : ++Humans;
-                ATslCharacter* C = CI.Char;
-                FRawArray R; std::memcpy(&R, &C->InstanceDescriptor, sizeof(R));
-                std::string Hex;
-                char Hb[4];
-                for (int i = 0; R.Data && i < R.Num && i < 32; ++i) { snprintf(Hb, sizeof(Hb), "%02X", static_cast<uint8*>(R.Data)[i]); Hex += Hb; }
-                APlayerState* PS = C->GetTslPlayerState();
-                const bool bNetId = PS && ObjValid(PS) && *reinterpret_cast<void* const*>(reinterpret_cast<const uint8*>(&PS->UniqueId) + 8) != nullptr;
-                int EqItems = -1;
-                if (C->GetInventoryFacade() && ObjValid(C->GetInventoryFacade()) && C->GetInventoryFacade()->GetEquipment() && ObjValid(C->GetInventoryFacade()->GetEquipment()))
-                    EqItems = C->GetInventoryFacade()->GetEquipment()->Items.Num();
-                UCustomizableObjectInstance* COI = C->CustomizableObjectInstance;
-                std::string Obj = (COI && ObjValid(COI) && COI->CustomizableObject) ? COI->CustomizableObject->GetName() : "-";
-                std::string Mesh = (C->CustomizableSkeletalComponent && ObjValid(C->CustomizableSkeletalComponent) &&
-                    C->CustomizableSkeletalComponent) ? C->CustomizableSkeletalComponent->GetName() : "-";
-                BLOG(std::string(CI.IsBot ? "BOT    " : "PLAYER ") + CharName(C) + " | class " + C->GetClass()->GetName() +
-                    " | gender " + ((uint8)C->Gender ? "F" : "M") + " | PS " + (PS ? PS->GetClass()->GetName() : std::string("none")) +
-                    " bIsABot " + (PS && PS->bIsABot ? "1" : "0") + " netId " + (bNetId ? "yes" : "no") +
-                    " | equip items " + std::to_string(EqItems) + " | mutable obj " + Obj + " mesh " + Mesh +
-                    " | record " + std::to_string(R.Num) + " bytes [" + Hex + "]");
-            }
-            if (!GClothNamesBuilt) BuildClothNames();
-            bool Shown[2][2] = { { false, false }, { false, false } };   // [bot][gender]
-            for (const FCharInfo& CI : GChars)
-            {
-                const int G = (uint8)CI.Char->Gender ? 1 : 0;
-                if (Shown[CI.IsBot][G]) continue;
-                uint8* D; int N;
-                if (!GetLook(CI.Char, D, N)) continue;
-                Shown[CI.IsBot][G] = true;
-                const std::vector<FDescTok> Tk = ParseDesc(D, N);
-                const std::unordered_set<std::string>& Cloth = ClothSetFor(Tk);
-                std::string L = std::string(CI.IsBot ? "BOT    " : "PLAYER ") + CharName(CI.Char) + (G ? " (F)" : " (M)") + " values:";
-                for (const FDescTok& t : Tk)
-                {
-                    L += " " + t.Name + (Cloth.count(Lower(t.Name)) ? "*" : "") + "=" + DescVal(D + t.Off, t.Len);
-                    if (L.size() > 700) { BLOG(L); L = "   "; }
-                }
-                BLOG(L);
-            }
-            BLOG("(* = clothing slot, kept as the bot's own; everything else is copied from a player of the same gender)");
-        }
-        else if (Cmd == "where")               PrintWhere(World);
-        else if (Cmd == "teams")               DumpTeams(World, "command");
-        else if (Cmd == "start")
-        {
-            // set the lobby countdown (same field PUBG_InGame sets from [Lobby] WaitTime)
-            AGameStateBase* GSB = UGameplayStatics::GetGameState(World);
-            if (GMatchSpawnDone)
-                BLOG("start: the match has already started");
-            else if (GSB && GSB->IsA(ATslGameState::StaticClass()))
-            {
-                const int Secs = N > 0 ? N : 5;
-                static_cast<ATslGameState*>(GSB)->RemainingTime = Secs;
-                BLOG("start: match starts in " + std::to_string(Secs) + " s");
-            }
-            else
-                BLOG("start: no TslGameState");
-        }
-        else if (Cmd == "weapons")             ListWeapons();
-        else if (Cmd == "reload")
-        {
-            ReloadIni();
-            LoadSettings();
-            ApplySettings(World);
-            BLOG("Settings reloaded (applies to existing bots too; PawnClass/ControllerClass only affect new bots)");
-        }
-        else if (Cmd == "nativebot")           TryNativeSpawnBot(World);
-        else if (!Cmd.empty())                 BLOG("Unknown command '" + Cmd + "' - type help");
-    }
-
-    void RunQueuedCommands(UWorld* World)
-    {
-        std::deque<std::string> Local;
-        {
-            std::lock_guard<std::mutex> Lock(GCmdMutex);
-            Local.swap(GCmdQueue);
-            GHasCommands = false;
-        }
-        for (const std::string& C : Local)
-            RunCommand(World, C);
-    }
-
-    // =================================================================================
-    //  Input threads
-    // =================================================================================
-    DWORD WINAPI ConsoleThread(LPVOID)
-    {
-        // Raw Win32 console reads: works no matter which C runtime this DLL was built with
-        // and whether or not anyone freopen'd stdin.
-        HANDLE In = INVALID_HANDLE_VALUE;
-        std::string Line;
-        char Buf[512];
-        for (;;)
-        {
-            if (In == INVALID_HANDLE_VALUE)
-            {
-                In = CreateFileA("CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                    nullptr, OPEN_EXISTING, 0, nullptr);
-                if (In == INVALID_HANDLE_VALUE) { Sleep(1000); continue; }
-            }
-            DWORD Read = 0;
-            if (!ReadConsoleA(In, Buf, sizeof(Buf), &Read, nullptr))
-            {
-                CloseHandle(In);
-                In = INVALID_HANDLE_VALUE;
-                Sleep(500);
-                continue;
-            }
-            for (DWORD i = 0; i < Read; ++i)
-            {
-                const char c = Buf[i];
-                if (c == '\n' || c == '\r')
-                {
-                    Line.erase(0, Line.find_first_not_of(" \t"));
-                    Line.erase(Line.find_last_not_of(" \t") + 1);
-                    if (!Line.empty())
-                        Bots::QueueCommand(Line);
-                    Line.clear();
-                }
-                else if (Line.size() < 256)
-                {
-                    Line.push_back(c);
-                }
-            }
-        }
-        return 0;
-    }
-
     bool IsOurWindowFocused()
     {
         HWND F = GetForegroundWindow();
@@ -5285,26 +4722,6 @@ namespace
         DWORD Pid = 0;
         GetWindowThreadProcessId(F, &Pid);
         return Pid == GetCurrentProcessId();
-    }
-
-    DWORD WINAPI HotkeyThread(LPVOID)
-    {
-        const int Keys[] = { VK_F5, VK_F6, VK_F7, VK_F8 };
-        const char* Cmds[] = { "bot", "bots", "killbots", "freeze" };
-        bool Prev[4] = {};
-        for (;;)
-        {
-            Sleep(30);
-            const bool bFocus = IsOurWindowFocused();
-            for (int i = 0; i < 4; ++i)
-            {
-                const bool bDown = (GetAsyncKeyState(Keys[i]) & 0x8000) != 0;
-                if (bDown && !Prev[i] && bFocus)
-                    Bots::QueueCommand(Cmds[i]);
-                Prev[i] = bDown;
-            }
-        }
-        return 0;
     }
 } // namespace
 
@@ -5317,6 +4734,7 @@ namespace Bots
     {
         if (GReady)
             return;
+
         LoadIni(Module);
         LoadSettings();
         if (!S.Enabled)
@@ -5327,13 +4745,8 @@ namespace Bots
         GGameThreadId = FindMainThreadId();
         BLOG("Game thread id: " + std::to_string(GGameThreadId));
 
-        CreateThread(nullptr, 0, ConsoleThread, nullptr, 0, nullptr);
-        if (S.Hotkeys)
-            CreateThread(nullptr, 0, HotkeyThread, nullptr, 0, nullptr);
-
         GTickRateStart = Now();
         GReady = true;
-        PrintHelp();
     }
 
 
@@ -5382,13 +4795,6 @@ namespace Bots
             }
         }
         return GFinishTaskCls.count(C) != 0;
-    }
-
-    void QueueCommand(const std::string& Command)
-    {
-        std::lock_guard<std::mutex> Lock(GCmdMutex);
-        GCmdQueue.push_back(Command);
-        GHasCommands = true;
     }
 
     void OnMatchStarted()
@@ -5565,8 +4971,10 @@ namespace Bots
             if (!S.KeepMatchWhileBotsAlive || !GMatchSpawnDone || !Obj || !Obj->IsA(AController::StaticClass()) || !HoldCondition())
                 return false;
             APawn* P = static_cast<AController*>(Obj)->K2_GetPawn();
-            if (!P || !ObjValid(P) || !P->IsA(ATslCharacter::StaticClass()) || static_cast<ATslCharacter*>(P)->Health <= 0.f)
+
+            if (!P || !P->IsA(ATslCharacter::StaticClass()) || static_cast<ATslCharacter*>(P)->Health <= 0.f)
                 return false; // dead player: let them see their rank screen
+
             const double T = Now();
             if (T - GLastResultBlockLog > 10.0)
             {
@@ -5622,18 +5030,20 @@ namespace Bots
             if ((Func == GFnGameEnded || Func == GFnRoundEnd) && Obj->IsA(AController::StaticClass()))
             {
                 APawn* P = static_cast<AController*>(Obj)->K2_GetPawn();
-                const bool bDead = !P || !ObjValid(P) || !P->IsA(ATslCharacter::StaticClass()) || static_cast<ATslCharacter*>(P)->Health <= 0.f;
+                const bool bDead = !P || !P->IsA(ATslCharacter::StaticClass()) || static_cast<ATslCharacter*>(P)->Health <= 0.f;
                 if (bDead) {
                     *(static_cast<uint8*>(Parms) + (Func == GFnGameEnded ? 0x08 : 0x00)) = 0; // bIsWinner = false
                 }
             }
         }
+
         if (GInTick)
             return;
+
         if (Obj && IsFireFunc(Func) && GShots.size() < 32 && Obj->IsA(AActor::StaticClass()))
         {
             APawn* Shooter = static_cast<AActor*>(Obj)->GetInstigator();
-            if (Shooter && ObjValid(Shooter) && !IsBotPawn(Shooter))
+            if (Shooter && !IsBotPawn(Shooter))
             {
                 GShots.push_back({ Shooter->K2_GetActorLocation() });
                 if (GHumanFiredAt.size() < 256) GHumanFiredAt[Shooter->GetIndex()] = Now();
@@ -5651,7 +5061,7 @@ namespace Bots
             const int32 AliveTeams = *reinterpret_cast<const int32*>(P + 0x48);
             APlayerState* Victim = static_cast<APlayerState*>(Obj);
             std::string Killer = "?";
-            if (KillerPS && ObjValid(KillerPS)) Killer = KillerPS->PlayerName.ToString();
+            if (KillerPS) Killer = KillerPS->PlayerName.ToString();
             BLOG("death: " + Victim->PlayerName.ToString() + " (killer " + Killer + ") - the game says " +
                 std::to_string(AliveNum) + " alive, " + std::to_string(AliveTeams) + " teams alive");
             return;
@@ -5696,8 +5106,7 @@ namespace Bots
 
         const bool bThink = (T - GLastThink) >= 1.0 / S.ThinkHz;
         const bool bSteer = (T - GLastSteer) >= 0.008;
-        const bool bCmds = GHasCommands.load(std::memory_order_relaxed);
-        if (!bThink && !bSteer && !bCmds)
+        if (!bThink && !bSteer)
             return;
 
         GInTick = true;
@@ -5711,9 +5120,6 @@ namespace Bots
 
         if (World)
         {
-            if (bCmds)
-                RunQueuedCommands(World);
-
             if (bThink)
             {
                 GLastThink = T;
@@ -5729,7 +5135,7 @@ namespace Bots
                         const bool bStateChanged = GMatchStateKnown && (MS.GetComparisonIndex() != GLastMatchState.GetComparisonIndex() || MS.GetNumber() != GLastMatchState.GetNumber());
                         // last seconds of the lobby: take the lobby bots out BEFORE the game counts its starting
                         // players and the plane build seats everyone - they respawn on land after the start
-                        if (!S.PlayerBots() && !S.RegisterTeams && !GPreStartCleared && Rem > 0 && Rem <= 3 && !GBots.empty())
+                        if (!S.RegisterTeams && !GPreStartCleared && Rem > 0 && Rem <= 3 && !GBots.empty())
                         {
                             int N = 0;
                             for (const FBot& B : GBots) if (B.State != EBotState::Dead) ++N;
@@ -5744,10 +5150,9 @@ namespace Bots
                         {
                             BLOG("Detected match start (MatchState " + MS.ToString() + ", RemainingTime " + std::to_string(Rem) + ")");
                             GatherCharacters(World);
-                            NavCheck(World, false);   // the map's sublevels are in by now
                             Bots::OnMatchStarted();
                         }
-                        if ((S.PlayerBots() || S.RegisterTeams) && S.SpawnOnMatchStart && !GLobbySpawned && !GMatchSpawnDone && Rem > 10 && HasRemotePlayer(World))
+                        if (S.RegisterTeams && S.SpawnOnMatchStart && !GLobbySpawned && !GMatchSpawnDone && Rem > 10 && HasRemotePlayer(World))
                         {
                             GLobbySpawned = true;
                             GPendingLobbySpawns += (std::max)(0, S.Count);
@@ -5763,8 +5168,7 @@ namespace Bots
                 while (GPendingLobbySpawns > 0 && Spawned < S.SpawnPerTick)
                 {
                     --GPendingLobbySpawns; ++Spawned;
-                    if (S.PlayerBots()) SpawnPlayerBotAt(World, nullptr);
-                    else SpawnBotNearPlayer(World);
+                    SpawnBotNearPlayer(World);
                 }
                 if (T < GSpawnNotBefore) Spawned = S.SpawnPerTick; // hold until the plane has everyone
                 while (GPendingNearSpawns > 0 && Spawned < S.SpawnPerTick)
@@ -5798,7 +5202,7 @@ namespace Bots
                         if (S.AiLod && GMatchSpawnDone && T < B.NextThinkAt && B.State != EBotState::Combat)
                             continue;
                         UpdateBot(World, B, T);
-                        if (S.AiLod && GMatchSpawnDone && B.State != EBotState::Dead && ObjValid(B.Pawn, B.PawnIndex))
+                        if (S.AiLod && GMatchSpawnDone && B.State != EBotState::Dead && B.Pawn)
                         {
                             float HD = 1e9f; FVector HL;
                             NearestHuman(B.Pawn->K2_GetActorLocation(), 1e9f, HD, HL);
@@ -5817,12 +5221,11 @@ namespace Bots
                 }
                 SyncGameCounters(World);
                 EndGuardThink(World, T);
-                ZoneWatchThink(World, T);
                 LobbyHoldThink(World);
+                
                 /*
                 if (GMatchSpawnDone)
                 {
-                    CheckPlanes(World, T);
                     KickFromPlanes(World, T);
                 }
                 */

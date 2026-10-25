@@ -40,9 +40,6 @@ namespace Bots
     // Top of the ProcessEvent hook (before Tick): call trace + death / match-end logging
     void OnCall(SDK::UObject* Obj, SDK::UFunction* Func, void* Parms);
 
-    // Thread-safe: queue a console command to run on the game thread.
-    void QueueCommand(const std::string& Command);
-
     // True if this pawn is one of our bots (used to skip the join-teleport for bots).
     bool IsBotPawn(SDK::APawn* Pawn);
 }

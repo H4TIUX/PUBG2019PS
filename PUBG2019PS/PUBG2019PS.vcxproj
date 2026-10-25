@@ -146,7 +146,6 @@
     <ClInclude Include="..\minhook_src\hde\table64.h" />
     <ClInclude Include="..\simpleini\ConvertUTF.h" />
     <ClInclude Include="..\simpleini\SimpleIni.h" />
-    <ClInclude Include="AirplaneLogic.h" />
     <ClInclude Include="BotLogic.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="IniSettings.h" />
@@ -183,7 +182,6 @@
     <ClCompile Include="..\minhook_src\hde\hde32.c" />
     <ClCompile Include="..\minhook_src\hde\hde64.c" />
     <ClCompile Include="..\simpleini\ConvertUTF.c" />
-    <ClCompile Include="AirplaneLogic.cpp" />
     <ClCompile Include="BotLogic.cpp" />
     <ClCompile Include="CoreUObject_functions.cpp" />
     <ClCompile Include="dllmain.cpp" />

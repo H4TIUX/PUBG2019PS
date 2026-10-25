@@ -16,9 +16,6 @@
     <Filter Include="SDK">
       <UniqueIdentifier>{955fbb55-ed6d-444b-aa0e-188b7e2ef6cf}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Airplane">
-      <UniqueIdentifier>{42c42962-e8f2-49dd-9715-e64cb8083422}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
@@ -135,9 +132,6 @@
     <ClInclude Include="SDK\AIModule_structs.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="AirplaneLogic.h">
-      <Filter>Airplane</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -181,9 +175,6 @@
     </ClCompile>
     <ClCompile Include="SDK\AIModule_functions.cpp">
       <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="AirplaneLogic.cpp">
-      <Filter>Airplane</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
