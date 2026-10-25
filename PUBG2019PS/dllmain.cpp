@@ -519,10 +519,6 @@ ProcessEvent_t GOriginalProcessEvent = nullptr;
         GM->TslGameState->NumStartPlayers = 0;
         GM->TslGameState->NumStartTeams = 0;
 
-        GM->TeamSize = 1;
-        GM->bEnableSquadInTeam = false;
-        GM->TslGameState->TeamSize = 1;
-
         //GM->MatchPreparer->WarmupTime = 50;
         //GM->MatchPreparer->TimerGameStartCountDown();
 

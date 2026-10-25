@@ -46,12 +46,13 @@ using namespace SDK;
 struct FBotSettings
 {
     bool        Enabled = true;
+    int         TeamSize = 1;
+    bool        BotsInTeam = false;
     int         Count = 20;      // bots spawned by "bots" / F6 / match start
     int         MaxBots = 99;
     bool        SpawnOnMatchStart = true;
     int         SpawnPerTick = 2;       // spawn throttle (per AI think)
     std::string PawnClass = "random"; // random = PlayerFemale_A_C / male class like real players | auto | a class name
-    std::string ControllerClass = "AIController"; // AIController | TslAIController | TslBotAIController
     std::string Weapon;                       // comma list matched against weapon/item class names, empty = any non-pistol gun
     std::string NamePrefix = "Bot_";
     float       SpawnMinX = 150000.f, SpawnMaxX = 550000.f; // same box the server uses for players
@@ -146,7 +147,6 @@ struct FBotSettings
     bool        HoldLobbyWhenEmpty = true; // lobby countdown stays at full until a real player is in the lobby
     float       EndWhenPlayersDead = 5.f;  // seconds after the last real player dies (or leaves) before the match ends (0 = off)
     float       ExitAfterMatch = 5.f;  // seconds after the match ends before the server process closes itself (0 = off)
-    bool        NativeEndGuard = true;    // hook the game's own SetMatchState so solo + bots can't auto-finish
     bool        SuperheroDrop = true;    // jump only over land, then land instantly (no freefall / chute / fall damage)
     float       JumpSpread = 90.f;    // once the plane is over land, each bot jumps within this many seconds
     float       DropSpread = 150000.f; // cm - land up to this far from the point under the plane (1.5 km)
@@ -182,19 +182,20 @@ struct FBotSettings
     bool  SplineAbsolute = true;    // pin the path to the map, not to the (moving) plane
 };
 FBotSettings S;
-
+ 
 namespace
 {
     void LoadSettings()
     {
         const char* B = "Bots";
         S.Enabled = GetIniBool(B, "Enabled", S.Enabled);
+        S.TeamSize = GetIniInt(B, "TeamSize", S.TeamSize);
+        S.BotsInTeam = GetIniBool(B, "BotsInTeam", S.BotsInTeam);
         S.Count = GetIniInt(B, "Count", S.Count);
         S.MaxBots = GetIniInt(B, "MaxBots", S.MaxBots);
         S.SpawnOnMatchStart = GetIniBool(B, "SpawnOnMatchStart", S.SpawnOnMatchStart);
         S.SpawnPerTick = (std::max)(1, GetIniInt(B, "SpawnPerTick", S.SpawnPerTick));
         S.PawnClass = GetIniString(B, "PawnClass", S.PawnClass.c_str());
-        S.ControllerClass = GetIniString(B, "ControllerClass", S.ControllerClass.c_str());
         S.Weapon = GetIniString(B, "Weapon", S.Weapon.c_str());
         S.NamePrefix = GetIniString(B, "NamePrefix", S.NamePrefix.c_str());
         S.SpawnMinX = GetIniFloat(B, "SpawnMinX", S.SpawnMinX);
@@ -293,7 +294,6 @@ namespace
         S.EndWhenPlayersDead = GetIniFloat(B, "EndWhenPlayersDead", S.EndWhenPlayersDead);
         S.HoldLobbyWhenEmpty = GetIniBool(B, "HoldLobbyWhenEmpty", S.HoldLobbyWhenEmpty);
         S.ExitAfterMatch = GetIniFloat(B, "ExitAfterMatch", S.ExitAfterMatch);
-        S.NativeEndGuard = GetIniBool(B, "NativeEndGuard", S.NativeEndGuard);
         S.SuperheroDrop = GetIniBool(B, "SuperheroDrop", S.SuperheroDrop);
         S.JumpSpread = GetIniFloat(B, "JumpSpread", S.JumpSpread);
         S.DropSpread = GetIniFloat(B, "DropSpread", S.DropSpread);
@@ -449,10 +449,12 @@ namespace
         return BestId;
     }
 
-    // =================================================================================
-    //  Bot state
-    // =================================================================================
-    enum class EBotState : uint8 { Roam, Combat, Dead };
+    enum class EBotState : uint8
+    {
+        Roam = 1,
+        Combat = 2,
+        Dead = 3
+    };
 
     struct FBot
     {
@@ -584,6 +586,7 @@ namespace
     bool                       GReady = false;
     bool                       GInTick = false;
     bool                       GFrozen = false;
+    bool                       GIsTeamSet = false;
     UWorld* GWorld = nullptr;
     std::vector<FBot>          GBots;
     std::vector<FCharInfo>     GChars;
@@ -660,7 +663,10 @@ namespace
     bool                       GChuteAltLogged = false;
     int                        GVetoCount = 0;
 
-    AAIController* AIC(const FBot& B) { return B.IsPC ? nullptr : static_cast<AAIController*>(B.Ctrl); }
+    AAIController* AIC(const FBot& B)
+    {
+        return B.IsPC ? nullptr : static_cast<AAIController*>(B.Ctrl);
+    }
 
     // Player bots are removed through the engine (logout), AI bots are just destroyed
     void DestroyBotController(FBot& B)
@@ -1199,14 +1205,6 @@ namespace
         }
     }
 
-    UClass* GetControllerClass()
-    {
-        const std::string C = Lower(S.ControllerClass);
-        if (C == "tslaicontroller")    return ATslAIController::StaticClass();
-        if (C == "tslbotaicontroller") return ATslBotAIController::StaticClass();
-        return AAIController::StaticClass();
-    }
-
     FTransform MakeXf(const FVector& Loc, float Yaw)
     {
         FTransform Xf{};
@@ -1259,15 +1257,9 @@ namespace
         return true;
     }
 
-    ATslGameMode* TslGM(UWorld* World)
-    {
-        AGameModeBase* GM = World ? World->AuthorityGameMode : nullptr;
-        return (GM && GM->IsA(ATslGameMode::StaticClass())) ? static_cast<ATslGameMode*>(GM) : nullptr;
-    }
-
     void DumpTeams(UWorld* World, const std::string& Why)
     {
-        ATslGameMode* GM = TslGM(World);
+        ATslGameMode* GM = (ATslGameMode*)World->AuthorityGameMode;
         if (!GM) { BLOG("teams (" + Why + "): no TslGameMode"); return; }
         FRawArray* Arr = reinterpret_cast<FRawArray*>(&GM->Teams);
         BLOG("teams (" + Why + "): GameMode.Teams has " + std::to_string(Arr->Num) + " entries");
@@ -1304,14 +1296,45 @@ namespace
         if (!S.RegisterTeams || B.IsPC || B.TeamActor)
             return;
 
-        ATslGameMode* GM = TslGM(World);
+        ATslGameMode* GM = (ATslGameMode*)World->AuthorityGameMode;
         if (!GM || !B.Ctrl || !B.Ctrl->PlayerState || !B.Ctrl->PlayerState->IsA(ATslPlayerState::StaticClass()))
             return;
 
         const int32 TeamNum = static_cast<ATslPlayerState*>(B.Ctrl->PlayerState)->TeamNumber;
-
         const FTransform Xf = MakeXf(B.Pawn->K2_GetActorLocation(), 0.f);
-        AActor* A = UGameplayStatics::BeginDeferredActorSpawnFromClass(World, ATeam::StaticClass(), Xf, ESpawnActorCollisionHandlingMethod::AlwaysSpawn, B.Ctrl);
+
+        AActor* A = nullptr;
+        if (S.TeamSize <= 1 || !S.BotsInTeam)
+        {
+            A = UGameplayStatics::BeginDeferredActorSpawnFromClass(World, ATeam::StaticClass(), Xf, ESpawnActorCollisionHandlingMethod::AlwaysSpawn, B.Ctrl);
+        }
+        else
+        {
+            AGameStateBase* GS = World->AuthorityGameMode->GameState;
+            for (APlayerState* PS1 : GS->PlayerArray)
+            {
+                ATslPlayerState* PS = (ATslPlayerState*)PS1;
+                ATslCharacter* Player = (ATslCharacter*)PS->GetOwningTslPlayerController()->GetTslCharacter();
+
+                if (Player)
+                {
+                    if (Player->GetTeam()->GetMemberNumber() >= S.TeamSize)
+                    {
+                        A = UGameplayStatics::BeginDeferredActorSpawnFromClass(World, ATeam::StaticClass(), Xf, ESpawnActorCollisionHandlingMethod::AlwaysSpawn, B.Ctrl);
+                    }
+                    else
+                    {
+                        while (!DecodeTeam(Player->Team)) Sleep(100);
+                        A = (AActor*)DecodeTeam(Player->Team);
+                        BLOG("Added bot to player's team");
+                    }
+                }
+                else
+                {
+                    BLOG("Player character pointer is invalid");
+                }
+            }
+        }
          
         if (!A)
         {
@@ -1329,10 +1352,9 @@ namespace
 		uint64 EncryptedTeam = EncodeTeam((uint64)Tm);
         B.Pawn->Team = EncryptedTeam;
         ATeam* DecodedTeam = (ATeam*)DecodeTeam(EncryptedTeam);
-        CUSTOMLOG("Decrypted team: " + DecodedTeam->GetName());
+        BLOG("Decrypted team: " + DecodedTeam->GetName());
         B.TeamActor = Tm;
         B.TeamActorIndex = Tm->GetIndex();
-        // new FTeams { TeamNum, Members = [Tm] } appended to GameMode.Teams
         ATeam** MemData = static_cast<ATeam**>(GameAlloc(sizeof(ATeam*)));
         if (!MemData)
         {
@@ -1377,7 +1399,7 @@ namespace
             return;
         ATeam* Tm = B.TeamActor;
         B.TeamActor = nullptr;
-        if (ATslGameMode* GM = TslGM(World))
+        if (ATslGameMode* GM = (ATslGameMode*)World->AuthorityGameMode)
         {
             FRawArray* Arr = reinterpret_cast<FRawArray*>(&GM->Teams);
             FTeams* E = reinterpret_cast<FTeams*>(Arr->Data);
@@ -1386,8 +1408,7 @@ namespace
                 FRawArray* M = reinterpret_cast<FRawArray*>(&E[i].Members);
                 if (M->Num == 1 && M->Data && static_cast<ATeam**>(M->Data)[0] == Tm)
                 {
-                    if (i < Arr->Num - 1)
-                        std::memmove(&E[i], &E[i + 1], (size_t)(Arr->Num - 1 - i) * sizeof(FTeams));
+                    if (i < Arr->Num - 1) std::memmove(&E[i], &E[i + 1], (size_t)(Arr->Num - 1 - i) * sizeof(FTeams));
                     Arr->Num -= 1;
                     break;
                 }
@@ -1434,9 +1455,9 @@ namespace
             BLOG("MaxBots reached (" + std::to_string(S.MaxBots) + ")");
             return false;
         }
-        UClass* PawnCls = GetPawnClass(World); // original
-        //UClass* PawnCls = Get_PlayerPawn_Class();
-        UClass* CtrlCls = GetControllerClass();
+
+        UClass* PawnCls = GetPawnClass(World);
+        UClass* CtrlCls = AAIController::StaticClass();
         if (!PawnCls || !CtrlCls)
             return false;
          
@@ -1568,21 +1589,7 @@ namespace
     bool SpawnRandomBot(UWorld* World)
     {
         FVector Loc;
-        if (!FindRandomSpawn(World, Loc))
-        {
-            // Fall back to near a player if the random box gave nothing (levels not streamed in?)
-            if (ATslCharacter* P = FindRealPlayer(World))
-            {
-                FVector Base = P->K2_GetActorLocation();
-                const float A = RandF(0.f, 2.f * kPi), R = RandF(3000.f, 8000.f);
-                Loc = GroundAt(World, V(Base.X + std::cos(A) * R, Base.Y + std::sin(A) * R, Base.Z));
-            }
-            else
-            {
-                BLOG("No valid spawn point found (ground trace missed 25x and no player to spawn near)");
-                return false;
-            }
-        }
+        FindRandomSpawn(World, Loc);
         return SpawnBotAt(World, Loc);
     }
 
@@ -1820,12 +1827,18 @@ namespace
     {
         ATslCharacter* Best = nullptr;
         OutDist = MaxDist;
+
         for (const FCharInfo& C : GChars)
         {
             if (C.IsBot || IsGhostChar(C.Char)) continue;
             const float D = Len(C.Loc - Loc);
-            if (D < OutDist) { OutDist = D; OutLoc = C.Loc; Best = C.Char; }
+
+            if (D < OutDist)
+            { 
+                OutDist = D; OutLoc = C.Loc; Best = C.Char;
+            }
         }
+
         return Best;
     }
 
@@ -2137,8 +2150,7 @@ namespace
         if (!GWarnedNoDamage && GHitsApplied == 0 && GHitsNoEffect >= 15)
         {
             GWarnedNoDamage = true;
-            BLOG("WARNING: 15 bot hits did no damage. The game may be rejecting it via CanDealDamage/teams, "
-                "or wants a TSL damage type. Try [Bots] DamageTypeClass= (see README) or ControllerClass=TslAIController.");
+            BLOG("WARNING: 15 bot hits did no damage. The game may be rejecting it via CanDealDamage/teams, or wants a TSL damage type. Try [Bots] DamageTypeClass=.");
         }
         return true;
     }
@@ -2593,7 +2605,7 @@ namespace
         {
             // player bots: the game spawns the pawn (now or a bit later) - pick it up / follow changes
             APawn* Cur = B.Ctrl->K2_GetPawn();
-            if (Cur && Cur != B.Pawn && Cur->IsA(ATslCharacter::StaticClass()))
+            if (Cur && Cur != B.Pawn)
             {
                 B.Pawn = static_cast<ATslCharacter*>(Cur);
                 B.PawnIndex = Cur->GetIndex();
@@ -2623,10 +2635,6 @@ namespace
                 return;
             }
         }
-
-        //const bool bPawnOk = ObjValid(B.Pawn, B.PawnIndex);
-        //if (B.State != EBotState::Dead && (!bPawnOk || B.Pawn->Health <= 0.f))
-            //EnterDead(B, T);
 
         if (B.State == EBotState::Dead)
         {
@@ -2671,28 +2679,23 @@ namespace
                 B.NextEjectTry = T + 2.0;
                 bool bFound = false;
 
-                TUObjectArray* Arr = UObject::GObjects.GetTypedPtr();
-                if (!Arr)
-                    return;
-
-                const int32 Num = Arr->Num();
-                for (int32 i = 0; i < Num; ++i)
+                for (int32 i = 0; i < UObject::GObjects->Num(); ++i)
                 {
-                    UObject* O = Arr->GetByIndex(i);
-                    if (O->IsDefaultObject())
+                    UObject* O = UObject::GObjects->GetByIndex(i);
+                    if (!O || O->IsDefaultObject() || !O->IsA(ATransportAircraftVehicle::StaticClass()))
                         continue;
 
-                    if (!O || !O->IsA(ATransportAircraftVehicle::StaticClass()))
-                        continue;
                     ATransportAircraftVehicle* Plane = static_cast<ATransportAircraftVehicle*>(O);
                     UTslVehicleSeatComponent* Seat = Plane->VehicleSeatComponent;
                     if (!Seat)
                         continue;
+
                     TArray<ATslCharacter*> Riders = Seat->GetRiders();
                     bool bMine = false;
                     for (ATslCharacter* R : Riders) if (R == Me) { bMine = true; break; }
                     if (!bMine && B.EjectTries < 3)
                         continue;
+
                     if (!Plane->bIsEnteredAtEjectionArea)
                     {
                         // leaving before the jump zone kills you (same as the Eject prompt not showing yet)
@@ -2772,7 +2775,6 @@ namespace
             if (bChute)
             {
                 Chute->K2_SetActorLocation(Dest + V(0.f, 0.f, 150.f), false, &Hit, true);
-                //Chute->Land();
                 Me->Server_SetParachuteLandingAssist(true);
                 Me->SetParachuteLandingAssist(true);
                 Me->OnLanded(Hit);
@@ -2808,8 +2810,7 @@ namespace
             B.HasDry = false;
             return;
         }
-        if (bChute || Me->IsFallingWithParachute() || (Me->GetTslCharacterMovement() && Me->GetTslCharacterMovement()->IsFalling() &&
-            Me->K2_GetActorLocation().Z > 20000.f))
+        if (bChute || Me->IsFallingWithParachute() || (Me->GetTslCharacterMovement() && Me->GetTslCharacterMovement()->IsFalling() && Me->K2_GetActorLocation().Z > 20000.f))
         {
             // falling out of the sky without having jumped through us (e.g. the game ejected everyone at the
             // end of the flight path): give it the superhero landing too
@@ -2826,37 +2827,6 @@ namespace
                 }
                 return;
             }
-            // skydiving: a real player presses F (or the client auto-opens it) - bots have no client, so we open it
-            /*
-            if (bChute && !Chute->IsReleased())
-            {
-                float Lo = Me->ForceReleasingParachuteAltitude;
-                float Hi = Me->ReleasingParachuteAltitude;
-                if (!(Lo > 100.f && Lo < 1e6f)) Lo = 30000.f;
-                if (!(Hi > Lo && Hi < 1e6f)) Hi = Lo + 40000.f;
-                if (!GChuteAltLogged)
-                {
-                    GChuteAltLogged = true;
-                    BLOG("parachute heights (cm): game opens it at " + std::to_string((int)Me->ReleasingParachuteAltitude) +
-                        ", forces it at " + std::to_string((int)Me->ForceReleasingParachuteAltitude) +
-                        ", minimum " + std::to_string((int)Me->MinimumParachuteAltitude));
-                }
-                if (B.ReleaseAlt <= 0.f)
-                    B.ReleaseAlt = RandF(Lo * 1.1f, Hi);
-                const float Alt = Chute->GetAltitudeFromFloor();
-                if (Alt > 0.f && Alt <= B.ReleaseAlt && T >= B.NextReleaseTry)
-                {
-                    B.NextReleaseTry = T + 0.5;
-                    Chute->ServerRelease();
-                    if (!B.ChuteLogged)
-                    {
-                        B.ChuteLogged = true;
-                        BLOG(B.Name + " opens its parachute at " + std::to_string((int)(Alt / 100.f)) + " m" +
-                            (Chute->CanRelease() ? "" : " (game says it can't yet - forcing)"));
-                    }
-                }
-            }
-            */
             B.SpawnedAt = T;
             B.HasDest = false;
             return;
@@ -2906,7 +2876,7 @@ namespace
                     B.ProgressPos = NewLoc;
                     B.HasDest = false;
                     B.SpawnedAt = T; // give the new spot its own check window
-                    BLOG(B.Name + " spawned in water - moved inland to " + std::to_string((int)NewLoc.X) + "," +
+                    BLOG(B.Name + " spawned in water - moved inland to " + std::to_string((int)NewLoc.X) + "," + 
                         std::to_string((int)NewLoc.Y) + "," + std::to_string((int)NewLoc.Z) + " (try " + std::to_string(B.WaterMoves) + ")");
                 }
                 return; // re-check next think before doing anything else
@@ -2966,8 +2936,7 @@ namespace
             return;
         }
 
-        if (!B.Armed && T >= B.NextArmTry && (!S.UnarmedInLobby || (GMatchSpawnDone && !Me->IsInAircraft() && !B.DropPending && !B.Hidden)))
-            TryArm(B, T);
+        if (!B.Armed && T >= B.NextArmTry && (!S.UnarmedInLobby || (GMatchSpawnDone && !Me->IsInAircraft() && !B.DropPending && !B.Hidden))) TryArm(B, T);
         ATslWeapon_Gun* Gun = B.Armed ? Me->GetWeaponGun() : nullptr;
         if (B.Armed && !Gun)
         {
@@ -2993,8 +2962,15 @@ namespace
                 {
                     UObject* PSO = Me->LastTakeHitInfo.PlayerInstigator.Get();
                     if (PSO)
+                    {
                         for (const FCharInfo& C : GChars)
-                            if (!C.IsBot && C.Char->GetTslPlayerState() == PSO) { Attacker = C.Char; break; }
+                        {
+                            if (!C.IsBot && C.Char->GetTslPlayerState() == PSO)
+                            {
+                                Attacker = C.Char; break;
+                            }
+                        }
+                    }
                 }
                 if (!Attacker)
                 {
@@ -3005,7 +2981,12 @@ namespace
                         auto F = GHumanFiredAt.find(C.Index);
                         if (F == GHumanFiredAt.end() || T - F->second > 1.5) continue;
                         const float D = Len(C.Loc - Me->K2_GetActorLocation());
-                        if (D < Best) { Best = D; Attacker = C.Char; }
+
+                        if (D < Best)
+                        {
+                            Best = D;
+                            Attacker = C.Char;
+                        }
                     }
                 }
             }
@@ -3043,8 +3024,7 @@ namespace
         // ---------------------------------------------------------------- perception
         int32 TIndex = -1; FVector TLoc{}; float TDist = 0.f;
         // unarmed or downed bots don't pick fights - they keep roaming
-        ATslCharacter* Target = (bDowned || !Gun || !GMatchSpawnDone || T < B.NoFireUntil) ? nullptr
-            : FindTarget(B, MyLoc, Me->GetActorForwardVector(), T < B.AlertUntil, TIndex, TLoc, TDist);
+        ATslCharacter* Target = (bDowned || !Gun || !GMatchSpawnDone || T < B.NoFireUntil) ? nullptr : FindTarget(B, MyLoc, Me->GetActorForwardVector(), T < B.AlertUntil, TIndex, TLoc, TDist);
 
         if (!Target && S.CombatLog && GMatchSpawnDone && T >= B.NextWhyLog && B.State != EBotState::Combat)
         {
@@ -3053,9 +3033,9 @@ namespace
             if (H)
             {
                 B.NextWhyLog = T + 10.0;
-                const char* Why = !Gun ? "no gun in its hands (re-arming)" : bDowned ? "it is downed" :
-                    T < B.NoFireUntil ? "landing grace" :
+                const char* Why = !Gun ? "no gun in its hands (re-arming)" : bDowned ? "it is downed" : T < B.NoFireUntil ? "landing grace" : 
                     !B.Ctrl->LineOfSightTo(H, V(0, 0, 0), false) ? "no line of sight" : "not facing you";
+
                 BLOG(B.Name + " is " + std::to_string((int)(HD / 100.f)) + " m from " + CharName(H) + " but not fighting: " + Why);
             }
         }
@@ -3065,8 +3045,7 @@ namespace
             if (B.State != EBotState::Combat || Target != B.Target)
             {
                 if (S.CombatLog && !IsBotChar(Target))
-                    BLOG(B.Name + " spots " + CharName(Target) + " at " + std::to_string((int)(TDist / 100.f)) + " m" +
-                        (T < B.AlertUntil ? " (alerted)" : "") + (B.Hunter ? " [hunter]" : ""));
+                    BLOG(B.Name + " spots " + CharName(Target) + " at " + std::to_string((int)(TDist / 100.f)) + " m" + (T < B.AlertUntil ? " (alerted)" : "") + (B.Hunter ? " [hunter]" : ""));
                 if (B.State != EBotState::Combat)
                 {
                     B.TargetSeenAt = T;
@@ -3096,12 +3075,13 @@ namespace
             if (bMayFire && S.FairFights && bHuman && !bProvoked)
             {
                 if (Target->IsIndoor() || Me->IsIndoor())
+                {
                     bMayFire = false; // only pick fights out in the open
+                }
                 else
                 {
                     auto It = GShooterSlot.find(TIndex);
-                    if (It != GShooterSlot.end() && It->second.first != B.Id && T - It->second.second < 3.0)
-                        bMayFire = false; // someone else is already shooting this player
+                    if (It != GShooterSlot.end() && It->second.first != B.Id && T - It->second.second < 3.0) bMayFire = false; // someone else is already shooting this player
                 }
             }
             if (Gun && T - B.TargetSeenAt >= S.ReactionTime && bMayFire)
@@ -3110,12 +3090,22 @@ namespace
                 FireLogic(B, Gun, Target, MyLoc, TLoc, TDist, T, S.FairFights && bHuman && !bProvoked);
             }
             else if (!bMayFire)
+            {
                 StopFire(B);
+            }
 
             const bool bEvading = T < B.EvadeUntil;
             if (bEvading && S.EvadeCrouch && T >= B.NextCrouchFlip)
             {
-                if (B.Crouched) Me->UnCrouch(false); else Me->Crouch(false);
+                if (B.Crouched)
+                {
+                    Me->UnCrouch(false);
+                }
+                else
+                {
+                    Me->Crouch(false);
+                }
+                
                 B.Crouched = !B.Crouched;
                 B.NextCrouchFlip = T + RandF(0.25f, 0.6f);
             }
@@ -3191,7 +3181,9 @@ namespace
         if (B.State == EBotState::Roam && !GMatchSpawnDone)
         {
             if (S.LobbyAntics)
+            {
                 LobbyAntics(B, Me, MyLoc, T);
+            }
             else
             {
                 // lobby: stand still - the start island is tiny and surrounded by water
@@ -3201,7 +3193,11 @@ namespace
         }
         else if (B.State == EBotState::Roam)
         {
-            if (B.Crouched) { Me->UnCrouch(false); B.Crouched = false; } // lobby crouch-spam left over
+            if (B.Crouched)
+            {
+                Me->UnCrouch(false);
+                B.Crouched = false;
+            } // lobby crouch-spam left over
             if (B.Hunter && T >= B.NextHuntReplan && T >= B.NoFireUntil)
             {
                 B.NextHuntReplan = T + S.HunterReplan * RandF(0.8f, 1.2f);
@@ -3210,8 +3206,7 @@ namespace
                 float HD; FVector HL;
                 // too far away, or keeps ending up in the water (no navmesh = can't path round lakes / the river):
                 // put it on land a few hundred metres from its player
-                if (S.HunterCatchUp && B.CanCatchUp && T >= B.NextCatchUp && NearestHuman(MyLoc, 1e9f, HD, HL) &&
-                    (HD > S.HunterCatchUpDist || B.SwimResets >= 2))
+                if (S.HunterCatchUp && B.CanCatchUp && T >= B.NextCatchUp && NearestHuman(MyLoc, 1e9f, HD, HL) && (HD > S.HunterCatchUpDist || B.SwimResets >= 2))
                 {
                     B.NextCatchUp = T + 45.0;
                     for (int Try = 0; Try < 8; ++Try)
@@ -3223,10 +3218,12 @@ namespace
                         if (GD2 < S.HunterCatchUpMin * 0.6f || GD2 > S.HunterCatchUpMax * 1.5f) continue;
                         if (bOutsideZone == false && GetSafeCircle(World, ZC, ZR) && Len(Flat(G - ZC)) > ZR * 0.95f) continue;
                         FHitResult Hit{};
+
                         Me->K2_SetActorLocation(G + V(0.f, 0.f, 110.f), false, &Hit, true);
                         if (Me->GetTslCharacterMovement()) Me->GetTslCharacterMovement()->StopMovementImmediately();
-                        BLOG(B.Name + " caught up with its player (" + std::to_string((int)(HD / 100.f)) + " m away" +
+                        BLOG(B.Name + " caught up with its player (" + std::to_string((int)(HD / 100.f)) + " m away" + 
                             (B.SwimResets >= 2 ? ", kept hitting water" : "") + ") - now " + std::to_string((int)(GD2 / 100.f)) + " m away");
+
                         B.SwimResets = 0;
                         B.HasDest = false;
                         B.HasDry = false;
@@ -3241,23 +3238,25 @@ namespace
                     const FVector Goal = HL + RotYaw(FromH, B.FlankAngle) * (HD > 20000.f ? S.HunterStandoff * 2.f : S.HunterStandoff);
                     const FVector ToG = Flat(Goal - MyLoc);
                     const float GD = Len(ToG);
+
                     if (GD > 300.f)
                     {
                         MoveTo(World, B, GD > S.ZoneLeg ? MyLoc + SafeNormal(ToG) * S.ZoneLeg : Goal, T, false);
                         SetSprint(B, HD > 6000.f); // sprint in, walk the last 60 m
                     }
+
                     B.NextRoamPick = T + S.HunterReplan + 1.0; // keep normal roaming from overriding the hunt
                 }
             }
-            if (B.HasDest && !B.UseSteer && T - B.DestSetAt > 0.75 &&
-                AIC(B) && AIC(B)->GetMoveStatus() == EPathFollowingStatus::Idle)
+            if (B.HasDest && !B.UseSteer && T - B.DestSetAt > 0.75 && AIC(B) && AIC(B)->GetMoveStatus() == EPathFollowingStatus::Idle)
             {
                 B.HasDest = false; // arrived (or path following gave up)
                 B.NextRoamPick = T + RandF(0.2f, 1.0f);
             }
             if (B.HasDest && T - B.DestSetAt > 90.0)
+            {
                 B.HasDest = false; // taking forever - pick something else
-
+            }
             if (!B.HasDest && T >= B.NextRoamPick)
             {
                 bool bRun = false;
@@ -3537,9 +3536,13 @@ namespace
     // the game's counters, so JOINED / "X left" / ranks include the bots.
     void SyncGameCounters(UWorld* World)
     {
-        AGameStateBase* GSB = UGameplayStatics::GetGameState(World);
-        if (!GSB || !GSB->IsA(ATslGameState::StaticClass()))
+        AGameStateBase* GSB = World->AuthorityGameMode->GameState;
+        if (!GSB)
+        {
+            BLOG("GameState is invalid");
             return;
+        }
+
         ATslGameState* GS = static_cast<ATslGameState*>(GSB);
 
         std::vector<int32> Teams;
@@ -3553,42 +3556,44 @@ namespace
             // controller is busy with the seat (counting only PlayerController-possessed characters
             // read 0 humans in the plane and the solo match ended)
             AController* C = CI.Char->Controller;
-            const bool bPC = C && C->IsA(APlayerController::StaticClass());
-            if (C && !bPC) continue; // some other AI - not a player
-            if (bPC && static_cast<APlayerController*>(C)->bIsLocalPlayerController) continue; // listen-server ghost
-            APlayerState* PS = bPC ? C->PlayerState : CI.Char->GetTslPlayerState();
-            if (!bPC && !(PS) && !CI.Char->IsInAircraft()) continue;
+            if (C && static_cast<APlayerController*>(C)->bIsLocalPlayerController) continue; // listen-server ghost
+
+            if (!C && !C->PlayerState && !CI.Char->IsInAircraft()) continue;
             ++Humans;
-            if (PS->IsA(ATslPlayerState::StaticClass()))
-                AddTeam(static_cast<ATslPlayerState*>(PS)->TeamNumber);
-            else
+
+            if (C->PlayerState->IsA(ATslPlayerState::StaticClass())) {
+                AddTeam(static_cast<ATslPlayerState*>(C->PlayerState)->TeamNumber);
+            }
+            else {
                 AddTeam(-1000 - Humans);
+            }
         }
         // players in a vehicle have no controller on their character - count logged-in, not-killed players too
+        int HumansPS = 0;
+        for (APlayerState* PS : GS->PlayerArray)
         {
-            int HumansPS = 0;
-            for (APlayerState* PS : GS->PlayerArray)
-            {
-                if (!PS || PS->bIsABot || !PS->IsA(ATslPlayerState::StaticClass())) continue;
-                ATslPlayerState* TPS = static_cast<ATslPlayerState*>(PS);
-                if (TPS->bKilled || TPS->bQuitter) continue;
-                AActor* Own = PS->GetOwner();
-                if (!Own || !Own->IsA(APlayerController::StaticClass())) continue;
-                if (static_cast<APlayerController*>(Own)->IsLocalPlayerController()) continue; // listen-server ghost
-                ++HumansPS;
-                AddTeam(TPS->TeamNumber);
-            }
-            if (HumansPS > Humans) Humans = HumansPS;
+            if (!PS || PS->bIsABot || !PS->IsA(ATslPlayerState::StaticClass())) continue;
+            ATslPlayerState* TslPlayerState = static_cast<ATslPlayerState*>(PS);
+            if (TslPlayerState->bKilled || TslPlayerState->bQuitter) continue;
+            AActor* OwnerPC = PS->GetOwner();
+            if (!OwnerPC) continue;
+            if (static_cast<APlayerController*>(OwnerPC)->IsLocalPlayerController()) continue; // listen-server ghost
+            ++HumansPS;
+            AddTeam(TslPlayerState->TeamNumber);
         }
+        if (HumansPS > Humans) Humans = HumansPS;
         int Bots = 0;
         for (const FBot& B : GBots)
         {
-            if (B.State == EBotState::Dead || !(B.Pawn) || B.Pawn->Health <= 0.f) continue;
+            if (B.State == EBotState::Dead || !B.Pawn || B.Pawn->Health <= 0.f) continue;
             ++Bots;
-            if (B.Ctrl && B.Ctrl->PlayerState && B.Ctrl->PlayerState->IsA(ATslPlayerState::StaticClass()))
+
+            if (B.Ctrl && B.Ctrl->PlayerState && B.Ctrl->PlayerState->IsA(ATslPlayerState::StaticClass())) {
                 AddTeam(static_cast<ATslPlayerState*>(B.Ctrl->PlayerState)->TeamNumber);
-            else
+            }
+            else {
                 AddTeam(-2000 - B.Id);
+            }
         }
         GHumansAlive = Humans;
         if (Humans > 0) GLastHumanAliveAt = Now();
@@ -3600,6 +3605,7 @@ namespace
             GHaveCounts = false;
             return;
         }
+
         GCountGS = GS;
         GCountGSIndex = GS->GetIndex();
         GCountsInMatch = GMatchSpawnDone;
@@ -3647,9 +3653,37 @@ namespace
             GCountGS->NumAlivePlayers = GWantAlive;
             GCountGS->NumAliveTeams = GWantTeams;
 
-            if (GStartPlayers > 1) { GCountGS->NumStartPlayers = GStartPlayers; GCountGS->NumStartTeams = GStartTeams; }
+            if (GStartPlayers > 1)
+            {
+                GCountGS->NumStartPlayers = GStartPlayers;
+                GCountGS->NumStartTeams = GStartTeams;
+            }
+
             GLastWroteAlive = GWantAlive;
             GLastWroteTeams = GWantTeams;
+        }
+
+        if (!GIsTeamSet)
+        {
+            ATslGameMode* GM = (ATslGameMode*)GCountGS->AuthorityGameMode;
+
+            if (GM)
+            {
+                GM->TeamSize = S.TeamSize;
+                GM->TslGameState->TeamSize = S.TeamSize;
+                if (S.TeamSize > 1) GM->SquadSize = S.TeamSize;
+                if (S.TeamSize > 1) GM->TslGameState->SquadSize = S.TeamSize;
+                GM->bEnableSquadInTeam = S.TeamSize > 1;
+                if (S.TeamSize > 1) GM->TslGameState->bUsingSquadInTeam = S.TeamSize > 1;
+                if (S.TeamSize > 1) GM->TslGameState->bIsTeamMatch = S.TeamSize > 1;
+                GIsTeamSet = true;
+
+                BLOG("Team size set to " + GM->TeamSize);
+            }
+            else
+            {
+                BLOG("GameMode is invalid");
+            }
         }
     }
 
@@ -3702,13 +3736,6 @@ namespace
         }
     }
 
-    // ================================================================================
-    //  v14: native match-end guard
-    //  With one human the game's own (native) alive-team count is 1 - it only counts real
-    //  logins - so it finishes the match the moment the plane leaves, without asking
-    //  ReadyToEndMatch. Every way of ending a match goes through AGameMode::SetMatchState
-    //  (WaitingPostMatch), so we find that function in the game exe and hook it.
-    // ================================================================================
     struct FTraceEnt { UFunction* Func; UClass* Cls; };
     FTraceEnt   GTrace[2048];
     uint32      GTraceHead = 0;
@@ -3765,86 +3792,6 @@ namespace
         char B[4];
         for (int i = 0; i < N; ++i) { snprintf(B, sizeof(B), "%02X ", static_cast<const uint8*>(P)[i]); R += B; }
         return R;
-    }
-
-    bool IsVirtualCall(const hde64s& H, int& Slot)
-    {
-        // FF /2 (call) or FF /4 (jmp) with [reg], [reg+disp8], [reg+disp32]
-        if (H.opcode != 0xFF || (H.modrm_reg != 2 && H.modrm_reg != 4) || H.modrm_mod == 3 || H.modrm_rm == 4 || H.modrm_rm == 5)
-            return false;
-        int32 Disp = 0;
-        if (H.modrm_mod == 1) Disp = static_cast<int8>(H.disp.disp8);
-        else if (H.modrm_mod == 2) Disp = static_cast<int32>(H.disp.disp32);
-        if (Disp < 0 || (Disp % 8) != 0 || Disp >= 0x2000)
-            return false;
-        Slot = Disp / 8;
-        return true;
-    }
-
-    // exec thunk of a UFunction: first virtual slot it calls, and/or its first direct call target
-    void ScanThunk(uint8* Code, int MaxBytes, int& Slot, uint8*& Direct)
-    {
-        Slot = -1; Direct = nullptr;
-        int Off = 0;
-        while (Off < MaxBytes && Readable(Code + Off, 16))
-        {
-            hde64s H{};
-            const unsigned L = hde64_disasm(Code + Off, &H);
-            if (!L || (H.flags & F_ERROR)) break;
-            int Sl;
-            if (IsVirtualCall(H, Sl)) { if (Slot < 0) Slot = Sl; if (H.modrm_reg == 4) break; }
-            else if (H.opcode == 0xE8 || H.opcode == 0xE9)
-            {
-                if (!Direct) Direct = Code + Off + L + static_cast<int32>(H.imm.imm32);
-                if (H.opcode == 0xE9) break;
-            }
-            else if (H.opcode == 0xC3 || H.opcode == 0xCC || H.opcode == 0xEB) break;
-            Off += L;
-        }
-    }
-
-    // In a function body: a load of the FName "WaitingPostMatch" (mov/lea reg,[rip+X])
-    // followed within a few instructions by a call -> that call is SetMatchState.
-    bool FindSetMatchState(uint8* Code, int MaxBytes, int& Slot, uint8*& Direct, bool& ByRef, std::vector<uint8*>& Callees)
-    {
-        int Off = 0, ArmedAt = -1, Cc = 0;
-        bool Ref = false;
-        while (Off < MaxBytes && Readable(Code + Off, 16))
-        {
-            hde64s H{};
-            const unsigned L = hde64_disasm(Code + Off, &H);
-            if (!L || (H.flags & F_ERROR)) break;
-            uint8* Ip = Code + Off;
-            Cc = (H.opcode == 0xCC) ? Cc + 1 : 0;
-            if (Cc >= 2) break; // padding: end of function
-            int Sl;
-            if ((H.opcode == 0x8B || H.opcode == 0x8D) && H.rex_w && H.modrm_mod == 0 && H.modrm_rm == 5)
-            {
-                uint8* X = Ip + L + static_cast<int32>(H.disp.disp32);
-                if (Readable(X, 8) && SameName(*reinterpret_cast<const FName*>(X), GNameWaitingPost))
-                {
-                    ArmedAt = Off;
-                    Ref = H.opcode == 0x8D;
-                }
-            }
-            else if (ArmedAt >= 0 && Off - ArmedAt <= 48 && IsVirtualCall(H, Sl))
-            {
-                Slot = Sl; Direct = nullptr; ByRef = Ref;
-                return true;
-            }
-            else if (H.opcode == 0xE8 || H.opcode == 0xE9)
-            {
-                uint8* Tgt = Ip + L + static_cast<int32>(H.imm.imm32);
-                if (ArmedAt >= 0 && Off - ArmedAt <= 48)
-                {
-                    Slot = -1; Direct = Tgt; ByRef = Ref;
-                    return true;
-                }
-                if (Callees.size() < 12 && InGameExe(Tgt)) Callees.push_back(Tgt);
-            }
-            Off += L;
-        }
-        return false;
     }
 
     bool HoldCondition()
@@ -4000,74 +3947,6 @@ namespace
         }
     }
 
-    void InstallEndGuard(UWorld* World)
-    {
-        if (GGuardTried || !S.NativeEndGuard || !World || !World->AuthorityGameMode)
-            return;
-        AGameModeBase* GM = World->AuthorityGameMode;
-
-        if (!GM->IsA(AGameMode::StaticClass()))
-            return;
-
-        GGuardTried = true;
-        BLOG("End guard: looking for the game's SetMatchState...");
-
-        for (int i = 0; i < 6; ++i)
-        {
-            std::wstring W(GKnownStateNames[i], GKnownStateNames[i] + std::strlen(GKnownStateNames[i]));
-            GKnownStates[i] = UKismetStringLibrary::Conv_StringToName(FString(W.c_str()));
-        }
-        GNameInProgress = GKnownStates[2];
-        GNameWaitingPost = GKnownStates[3];
-        GHaveNames = GNameWaitingPost.GetComparisonIndex() != 0 && GNameInProgress.GetComparisonIndex() != 0;
-        if (!GHaveNames) { GGuardWhat = "FName lookup failed"; BLOG("End guard: " + GGuardWhat); return; }
-
-        // sanity: the live MatchState really sits at 0x430
-        const FName& Live = static_cast<AGameMode*>(GM)->MatchState;
-        bool bKnown = false;
-        for (int i = 0; i < 6; ++i) if (SameName(Live, GKnownStates[i])) bKnown = true;
-        if (!bKnown) { GGuardWhat = "MatchState offset check failed"; BLOG("End guard: " + GGuardWhat + " - not hooking"); return; }
-
-        void** Vt = *reinterpret_cast<void***>(GM);
-        if (!InGameExe(Vt)) { GGuardWhat = "game mode vtable not in exe"; BLOG("End guard: " + GGuardWhat); return; }
-
-        std::vector<uint8*> Found;
-        std::vector<int> FoundSlot;
-        int Slots = 0;
-        for (int i = 0; i < 700; ++i, ++Slots)
-        {
-            if (!Readable(&Vt[i], 8) || !InGameExe(Vt[i])) break;
-            uint8* F = static_cast<uint8*>(Vt[i]);
-            bool bSt, bRd;
-            ScanFieldUse(F, 0x200, kMatchStateOff, bSt, bRd);
-            if (bSt && bRd && std::find(Found.begin(), Found.end(), F) == Found.end())
-            {
-                Found.push_back(F);
-                FoundSlot.push_back(i);
-            }
-        }
-        BLOG("End guard: scanned " + std::to_string(Slots) + " game mode virtuals, " + std::to_string(Found.size()) + " write MatchState");
-        for (size_t i = 0; i < Found.size(); ++i)
-            BLOG("End guard:   slot " + std::to_string(FoundSlot[i]) + " " + Rva(Found[i]) + " [" + Bytes(Found[i], 20) + "]");
-        if (Found.size() != 1)
-        {
-            GGuardWhat = Found.empty() ? "SetMatchState not found - not hooking" : "several candidates - not hooking (safe)";
-            BLOG("End guard: " + GGuardWhat + " (fine - the match-end task is caught instead)");
-            return;
-        }
-        MH_STATUS St = MH_CreateHook(Found[0], reinterpret_cast<void*>(&DetSetMatchState), reinterpret_cast<void**>(&GOrigSetMatchState));
-        if (St == MH_OK) St = MH_EnableHook(Found[0]);
-        if (St != MH_OK)
-        {
-            GGuardWhat = std::string("hook failed: ") + MH_StatusToString(St);
-            BLOG("End guard: " + GGuardWhat);
-            return;
-        }
-        GGuardOk = true;
-        GGuardWhat = "SetMatchState hooked at " + Rva(Found[0]) + " (vtable slot " + std::to_string(FoundSlot[0]) + ")";
-        BLOG("End guard: " + GGuardWhat + " - watch for 'SetMatchState -> ...' lines to confirm");
-    }
-
     // every think: install the guard, finish a held match once it's decided, log game counters
     // ---- empty lobby: keep the countdown at full so an empty server never plays a match on its own
     int  GLobbyFullTime = 0;
@@ -4134,8 +4013,6 @@ namespace
 
     void EndGuardThink(UWorld* World, double T)
     {
-        InstallEndGuard(World);
-
         // every real player is dead (or gone): end the match - bots alone don't keep it going
         if (S.EndWhenPlayersDead > 0.f && GMatchSpawnDone && !GMatchOver && GMatchStartedAt > 0)
         {
@@ -5112,7 +4989,11 @@ namespace Bots
         GInTick = true;
 
         static bool bLoggedFirstTick = false;
-        if (!bLoggedFirstTick) { bLoggedFirstTick = true; BLOG("First tick on the game thread"); }
+        if (!bLoggedFirstTick)
+        {
+            bLoggedFirstTick = true;
+            BLOG("First tick on the game thread");
+        }
 
         UWorld* World = UWorld::GetWorld();
         if (World != GWorld)
@@ -5127,7 +5008,7 @@ namespace Bots
                 if (GAutoMatchStart && !GMatchSpawnDone)
                 {
                     AGameStateBase* GSB = World->AuthorityGameMode->GameState;
-                    if (GSB && GSB->IsA(ATslGameState::StaticClass()))
+                    if (GSB)
                     {
                         ATslGameState* GS = static_cast<ATslGameState*>(GSB);
                         const FName MS = GS->MatchState;
@@ -5144,23 +5025,33 @@ namespace Bots
                             GPreStartCleared = true;
                             BLOG("Lobby ending - " + std::to_string(N) + " lobby bots removed, they respawn on land after the plane leaves");
                         }
+
                         if (bStateChanged && GMatchSpawnDone)
+                        {
                             DumpTeams(World, "match state -> " + MS.ToString());
+                        }
+
                         if (bStateChanged && Rem <= 0 && GLastRemaining <= 0)
                         {
                             BLOG("Detected match start (MatchState " + MS.ToString() + ", RemainingTime " + std::to_string(Rem) + ")");
                             GatherCharacters(World);
                             Bots::OnMatchStarted();
                         }
+
                         if (S.RegisterTeams && S.SpawnOnMatchStart && !GLobbySpawned && !GMatchSpawnDone && Rem > 10 && HasRemotePlayer(World))
                         {
                             GLobbySpawned = true;
                             GPendingLobbySpawns += (std::max)(0, S.Count);
                             BLOG("Lobby: " + std::to_string(S.Count) + " bots joining now so they board the plane");
                         }
+
                         GLastMatchState = MS;
                         GLastRemaining = Rem;
                         GMatchStateKnown = true;
+                    }
+                    else
+                    {
+                        BLOG("GameState is invalid");
                     }
                 }
 
@@ -5183,7 +5074,11 @@ namespace Bots
                 }
 
                 static bool bLoggedFirstThink = false;
-                if (!bLoggedFirstThink) { bLoggedFirstThink = true; BLOG("First AI think OK (no crash so far)"); }
+                if (!bLoggedFirstThink)
+                {
+                    bLoggedFirstThink = true;
+                    BLOG("First AI think OK (no crash so far)");
+                }
 
                 if (!GBots.empty())
                 {
@@ -5196,23 +5091,21 @@ namespace Bots
                     DressPass();
                     AppearancePass();
                     BodyPass(T);
+
                     for (FBot& B : GBots)
                     {
                         // AI LOD: full rate near players / in a fight, slower far away (spread so they don't all think on the same frame)
-                        if (S.AiLod && GMatchSpawnDone && T < B.NextThinkAt && B.State != EBotState::Combat)
-                            continue;
+                        if (S.AiLod && GMatchSpawnDone && T < B.NextThinkAt && B.State != EBotState::Combat) continue;
                         UpdateBot(World, B, T);
                         if (S.AiLod && GMatchSpawnDone && B.State != EBotState::Dead && B.Pawn)
                         {
                             float HD = 1e9f; FVector HL;
                             NearestHuman(B.Pawn->K2_GetActorLocation(), 1e9f, HD, HL);
-                            const double Every = (B.State == EBotState::Combat || HD < 60000.f) ? 0.0
-                                : HD < 150000.f ? 0.3 : 1.0;
+                            const double Every = (B.State == EBotState::Combat || HD < 60000.f) ? 0.0 : HD < 150000.f ? 0.3 : 1.0;
                             B.NextThinkAt = T + Every * RandF(0.8f, 1.2f);
                         }
                     }
-                    GBots.erase(std::remove_if(GBots.begin(), GBots.end(),
-                        [](const FBot& B) { return B.Remove; }), GBots.end());
+                    GBots.erase(std::remove_if(GBots.begin(), GBots.end(), [](const FBot& B) { return B.Remove; }), GBots.end());
                 }
                 else
                 {
@@ -5222,7 +5115,7 @@ namespace Bots
                 SyncGameCounters(World);
                 EndGuardThink(World, T);
                 LobbyHoldThink(World);
-                
+
                 /*
                 if (GMatchSpawnDone)
                 {
@@ -5236,6 +5129,10 @@ namespace Bots
                 GLastSteer = T;
                 SteerStep();
             }
+        }
+        else
+        {
+            BLOG("World is invalid");
         }
 
         GInTick = false;
