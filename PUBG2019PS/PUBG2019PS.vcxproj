@@ -146,11 +146,10 @@
     <ClInclude Include="..\minhook_src\hde\table64.h" />
     <ClInclude Include="..\simpleini\ConvertUTF.h" />
     <ClInclude Include="..\simpleini\SimpleIni.h" />
-    <ClInclude Include="BotLogic.h" />
+    <ClInclude Include="Bots\BotLogic.h" />
     <ClInclude Include="framework.h" />
-    <ClInclude Include="IniSettings.h" />
+    <ClInclude Include="IniSettings\IniSettings.h" />
     <ClInclude Include="MinHook.h" />
-    <ClInclude Include="pch.h" />
     <ClInclude Include="SDK.hpp" />
     <ClInclude Include="SDK\AIModule_classes.hpp" />
     <ClInclude Include="SDK\AIModule_parameters.hpp" />
@@ -182,16 +181,10 @@
     <ClCompile Include="..\minhook_src\hde\hde32.c" />
     <ClCompile Include="..\minhook_src\hde\hde64.c" />
     <ClCompile Include="..\simpleini\ConvertUTF.c" />
-    <ClCompile Include="BotLogic.cpp" />
+    <ClCompile Include="Bots\BotLogic.cpp" />
     <ClCompile Include="CoreUObject_functions.cpp" />
     <ClCompile Include="dllmain.cpp" />
-    <ClCompile Include="IniSettings.cpp" />
-    <ClCompile Include="pch.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
-    </ClCompile>
+    <ClCompile Include="IniSettings\IniSettings.cpp" />
     <ClCompile Include="SDK\AIModule_functions.cpp" />
     <ClCompile Include="SDK\Basic.cpp" />
     <ClCompile Include="SDK\Engine_functions.cpp" />
@@ -204,6 +197,9 @@
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\simpleini\SOURCE.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="NativeNullGuard.inl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -1,0 +1,1 @@
+TslGame.exe DihorOtok_Main?listen -port=8888 -LOG -nullrhi -nosound -unattended -AllowJoinAnyMatchState -NoBattleEye -NoBE -NoEAC -NoVerifyGC -NotInstalled

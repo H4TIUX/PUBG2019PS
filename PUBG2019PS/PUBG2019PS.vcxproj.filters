@@ -9,19 +9,18 @@
       <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
       <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
     </Filter>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
-    </Filter>
     <Filter Include="SDK">
       <UniqueIdentifier>{955fbb55-ed6d-444b-aa0e-188b7e2ef6cf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Bots">
+      <UniqueIdentifier>{af2dc96c-31c0-4df4-88a7-83d3ef538b0a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="IniSettings">
+      <UniqueIdentifier>{c47af918-669b-407a-8d11-6e54ca29faff}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="pch.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="SDK.hpp">
@@ -96,9 +95,6 @@
     <ClInclude Include="SDK\Landscape_structs.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="IniSettings.h">
-      <Filter>Source Files</Filter>
-    </ClInclude>
     <ClInclude Include="..\simpleini\ConvertUTF.h">
       <Filter>Source Files</Filter>
     </ClInclude>
@@ -120,9 +116,6 @@
     <ClInclude Include="..\minhook_src\hde\table64.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="BotLogic.h">
-      <Filter>Source Files</Filter>
-    </ClInclude>
     <ClInclude Include="SDK\AIModule_classes.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
@@ -132,12 +125,15 @@
     <ClInclude Include="SDK\AIModule_structs.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="Bots\BotLogic.h">
+      <Filter>Bots</Filter>
+    </ClInclude>
+    <ClInclude Include="IniSettings\IniSettings.h">
+      <Filter>IniSettings</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="pch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="SDK\Engine_functions.cpp">
@@ -158,12 +154,6 @@
     <ClCompile Include="SDK\Landscape_functions.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="BotLogic.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="IniSettings.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\simpleini\ConvertUTF.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -176,6 +166,12 @@
     <ClCompile Include="SDK\AIModule_functions.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Bots\BotLogic.cpp">
+      <Filter>Bots</Filter>
+    </ClCompile>
+    <ClCompile Include="IniSettings\IniSettings.cpp">
+      <Filter>IniSettings</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Library Include="libMinHook.x64.lib" />
@@ -184,5 +180,10 @@
     <Text Include="..\simpleini\SOURCE.txt">
       <Filter>Source Files</Filter>
     </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="NativeNullGuard.inl">
+      <Filter>Header Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

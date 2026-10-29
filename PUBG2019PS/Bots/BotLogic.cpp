@@ -5,7 +5,7 @@
 #include <Windows.h>
 #include <TlHelp32.h>
 
-#include "MinHook.h"
+#include "../MinHook.h"
 
 #include <algorithm>
 #include <atomic>
@@ -28,15 +28,15 @@
 #include <unordered_set>
 #include <vector>
 
-#include "SDK/Engine_parameters.hpp"
-#include "SDK/Engine_classes.hpp"
-#include "SDK/TslGame_parameters.hpp"
-#include "IniSettings.h"
-#include "SDK.hpp"
+#include "../SDK/Engine_parameters.hpp"
+#include "../SDK/Engine_classes.hpp"
+#include "../SDK/TslGame_parameters.hpp"
+#include "../IniSettings/IniSettings.h"
+#include "../SDK.hpp"
 
 #include "BotLogic.h"
 
-#include "../minhook_src/hde/hde64.h"
+#include "../../minhook_src/hde/hde64.h"
 
 using namespace SDK;
 
@@ -481,6 +481,23 @@ namespace
         int             DropTries = 0;
         double          NextDropTry = 0;
         int             EjectTries = 0;
+        bool            SkyPrepareAttempted = false;
+        bool            SkyStartAttempted = false;
+        bool            NativeSkyActive = false;
+        bool            SkyDirectionSet = false;
+        float           SkyHeading = 0.f;
+        bool            HasSkyTarget = false;
+        FVector         SkyTarget{};
+        double          NextSkySteer = 0;
+        double          NextSkyGroundCheck = 0.0;
+        double          NextSkyShoreSearch = 0.0;
+        double          NextTerrainCheck = 0.0;
+        int             UndergroundChecks = 0;
+        double          NextSkyRequest = 0.0;
+        double          NextSkyLog = 0.0;
+        double          NextBotNameCheck = 0.0;
+        double          GroundProbeAt = 0.0;
+        FVector         GroundProbePos{};
         EBotState       State = EBotState::Roam;
         bool            Remove = false;
 
@@ -554,6 +571,9 @@ namespace
 
         // water
         double          SwimSince = 0;
+        double          NextShoreSearch = 0;
+        bool            HasShoreTarget = false;
+        FVector         ShoreTarget{};
         double          SpawnedAt = 0;
         int             WaterMoves = 0;
         bool            HasDry = false;
@@ -662,6 +682,13 @@ namespace
     double                     GNextPlaneCheck = 0;
     bool                       GChuteAltLogged = false;
     int                        GVetoCount = 0;
+    unsigned                   GJumpSide = 0;
+    double                     GNextSkyShoreSearch = 0;
+    double                     GNextBotTerrainTrace = 0;
+    std::vector<FVector>       GBuildingTargets;
+    std::unordered_set<int32>  GBuildingIndices;
+    int32                      GBuildingScanIndex = 0;
+    double                     GBuildingRescanAt = 0;
 
     AAIController* AIC(const FBot& B)
     {
@@ -813,7 +840,7 @@ namespace
                     {
                         ATslCharacter* C = static_cast<ATslCharacter*>(O);
 
-                        if (C == UGameplayStatics::GetPlayerCharacter(UWorld::GetWorld(), 0)) continue;
+                        if (C == UGameplayStatics::GetPlayerCharacter(UWorld::GetWorld(), 0)) continue; // Listen server pawn
 
                         const bool bBot = IsBotChar(C);
                         if (bBot && C->bHidden) {
@@ -839,8 +866,7 @@ namespace
         }
     }
 
-    // Remote client first. The listen server always has its own local player pawn (the "ghost"),
-    // which we only fall back to if nobody else is connected.
+    // Finds a real player's character, ignoring the listen server's pawn
     ATslCharacter* FindRealPlayer(UWorld* World)
     {
 		AGameStateBase* GS = World->AuthorityGameMode->GameState;
@@ -878,9 +904,9 @@ namespace
         GBonesCached = true;
     }
 
-    // =================================================================================
-    //  Weapons
-    // =================================================================================
+    // Looks for all the ATslWeapon_Gun (weapon) classes, on 2017 this worked on startup since
+    // the spawn island had weapon spawns, therefore the classes were already initialized.
+    // This however doesn not work on 2019.
     void ScanWeapons()
     {
         GWeapons.clear();
@@ -914,6 +940,7 @@ namespace
     {
         if (GWeapons.empty())
             ScanWeapons();
+
         if (GWeapons.empty())
             return nullptr;
 
@@ -925,7 +952,9 @@ namespace
             {
                 const std::string A = Lower(W.WeaponName), B = Lower(W.ItemName);
                 for (const std::string& K : Wanted)
+                {
                     if (A.find(K) != std::string::npos || B.find(K) != std::string::npos) { Pool.push_back(&W); break; }
+                }
             }
         }
         if (Pool.empty())
@@ -968,13 +997,13 @@ namespace
             ATslWeapon* W = OutWP->EquippedWeapons[i];
             if (!W)
                 continue;
+
             if (bLog) List += " [" + std::to_string(i) + "]" + W->GetClass()->GetName();
-            if (GunIdx < 0 && W->IsA(ATslWeapon_Gun::StaticClass()))
-                GunIdx = i;
+            if (GunIdx < 0 && W->IsA(ATslWeapon_Gun::StaticClass())) GunIdx = i;
         }
         if (bLog)
-            BLOG(B.Name + " weapon slots:" + (List.empty() ? std::string(" none") : List) +
-                " | in hands index " + std::to_string(OutWP->GetWeaponIndex()));
+            BLOG(B.Name + " weapon slots:" + (List.empty() ? std::string(" none") : List) + " | in hands index " + std::to_string(OutWP->GetWeaponIndex()));
+
         return GunIdx;
     }
 
@@ -1004,7 +1033,13 @@ namespace
             switch (B.GiveTries)
             {
             case 0:
-                if (W) { Me->GiveWeapon(TSubclassOf<ATslWeapon>(W->WeaponClass)); if (S.VerboseLog) BLOG(B.Name + " GiveWeapon(" + W->WeaponName + ")"); }
+                if (W)
+                {
+                    Me->GiveWeapon(TSubclassOf<ATslWeapon>(W->WeaponClass));
+
+                    if (S.VerboseLog)
+                        BLOG(B.Name + " GiveWeapon(" + W->WeaponName + ")");
+                }
                 break;
             case 1:
             {
@@ -1014,8 +1049,7 @@ namespace
                     UItem* Item = static_cast<UItem*>(UGameplayStatics::SpawnObject(W->ItemClass, Transient));
                     if (Item)
                     {
-                        if (Item->IsA(UWeaponItem::StaticClass()))
-                            static_cast<UWeaponItem*>(Item)->AmmoCount = static_cast<UWeaponItem*>(Item)->AmmoPerClip;
+                        if (Item->IsA(UWeaponItem::StaticClass())) static_cast<UWeaponItem*>(Item)->AmmoCount = static_cast<UWeaponItem*>(Item)->AmmoPerClip;
                         Me->PickUpItem(Item, FName{}, FString(L""));
                         if (S.VerboseLog) BLOG(B.Name + " PickUpItem(" + W->ItemName + ")");
                     }
@@ -1040,14 +1074,14 @@ namespace
             return;
         }
 
-        // gun is in a slot - put it in the hands
+        // Switch weapon from inventary slot to holding hand
         const int M = (GWorkingArmStep >= 0) ? GWorkingArmStep : (B.ArmStep % 4);
         switch (M)
         {
-        case 0: WP->ServerArmWeapon(Slot, WP->GetWeaponIndex(), false, WP->GetOwner()->K2_GetActorLocation(), 0, 0); break;
-        case 1: WP->ServerArmWeapon(Slot, WP->GetWeaponIndex(), true, WP->GetOwner()->K2_GetActorLocation(), 0, 0); break;
-            //case 2: WP->ServerArmWeapon(Slot, WP->GetWeaponIndex(), false); WP->CurrentWeaponIndex = Slot; break;
-        default: Me->OnWeapon_1(); break;
+            case 0: WP->ServerArmWeapon(Slot, WP->GetWeaponIndex(), false, WP->GetOwner()->K2_GetActorLocation(), 0, 0); break;
+            case 1: WP->ServerArmWeapon(Slot, WP->GetWeaponIndex(), true, WP->GetOwner()->K2_GetActorLocation(), 0, 0); break;
+            //case 2: WP->ServerArmWeapon(Slot, WP->GetWeaponIndex(), false, WP->GetOwner()->K2_GetActorLocation(), 0, 0); WP->WeaponArmInfo.RightWeaponIndex = Slot; break;
+            default: Me->OnWeapon_1(); break;
         }
         B.LastArmMethod = M;
         B.ArmStep++;
@@ -1094,8 +1128,8 @@ namespace
                 if (GMB && GMB->IsA(ATslGameMode::StaticClass())) GMaleCls = static_cast<ATslGameMode*>(GMB)->MalePawnClass;
                 if (!GMaleCls) GMaleCls = UObject::FindClassFast("PlayerMale_A_C");
                 if (!GFemaleCls && GMB && GMB->DefaultPawnClass && GMB->DefaultPawnClass != GMaleCls) GFemaleCls = GMB->DefaultPawnClass;
-                BLOG("Bot pawn classes: female " + (GFemaleCls ? GFemaleCls->GetName() : std::string("<not found>")) +
-                    ", male " + (GMaleCls ? GMaleCls->GetName() : std::string("<not found>")));
+                BLOG("Bot pawn classes: female " + (GFemaleCls ? GFemaleCls->GetName() : std::string("<not found>")) + ", male " + 
+                    (GMaleCls ? GMaleCls->GetName() : std::string("<not found>")));
             }
             UClass* C = nullptr;
             const std::string Gw = Lower(S.BotGender);
@@ -1145,12 +1179,9 @@ namespace
 
             if (World)
             {
-                TUObjectArray* Arr = UObject::GObjects.GetTypedPtr();
-
-                const int32 Num = Arr->Num();
-                for (int32 i = 0; i < Num; ++i)
+                for (int32 i = 0; i < UObject::GObjects->Num(); ++i)
                 {
-                    UObject* O = Arr->GetByIndex(i);
+                    UObject* O = UObject::GObjects->GetByIndex(i);
                     if (O->IsDefaultObject())
                         continue;
 
@@ -1495,17 +1526,6 @@ namespace
         P->AIControllerClass = CtrlCls;
         UGameplayStatics::FinishSpawningActor(PA, Xf);
         if (bStepLog) BLOG("spawn: pawn OK");
-
-        /*
-        if (!ObjValid(P))
-        {
-            BLOG("Spawned pawn is invalid or not an ATslCharacter - check [Bots] PawnClass");
-            BLOG("Pawn class is " + P->GetFullName());
-            if (ObjValid(P)) P->K2_DestroyActor();
-            Ctrl->K2_DestroyActor();
-            return false;
-        }
-        */
     
         Ctrl->Possess(P);
         if (bStepLog) BLOG("spawn: possess OK");
@@ -1525,8 +1545,15 @@ namespace
         B.ProgressPos = Loc;
         B.SpawnedAt = T;
 
+        P->bAlwaysRelevant = true;
+        P->bNetUseOwnerRelevancy = false;
+        P->bOnlyRelevantToOwner = false;
+        P->bReplicateMovement = true;
+        P->bReplicates = true;
+        P->bHidden = false;
+
         // 3) Player state: name, bot flag, team
-        if (Ctrl->PlayerState /* && ObjValid(Ctrl->PlayerState)*/)
+        if (Ctrl->PlayerState)
         {
             APlayerState* PS = Ctrl->PlayerState;
             PS->bIsABot = S.MarkAsBot ? 1 : 0; // flagged bots are drawn by clients as test bots (red ghosts / headless)
@@ -1606,7 +1633,7 @@ namespace
         {
             const float A = RandF(0.f, 2.f * kPi), R = RandF(1500.f, 3000.f);
             FVector G;
-            if (TraceDown(World, Base.X + std::cos(A) * R, Base.Y + std::sin(A) * R, Base.Z - 200.f + 3000.f, -30000.f, G) && !BelowSea(G.Z))
+            if (TraceDown(World, Base.X + std::cos(A) * R, Base.Y + std::sin(A) * R, Base.Z + 3000.f, -30000.f, G) && !BelowSea(G.Z))
                 return SpawnBotAt(World, G);
         }
         return SpawnRandomBot(World);
@@ -1653,10 +1680,9 @@ namespace
         for (const FCharInfo& CI : GChars)
         {
             if (CI.IsBot) continue;
-            AController* C = CI.Char->GetController();
+            AController* C = CI.Char->Controller;
             if (!C || !C->IsA(APlayerController::StaticClass())) continue;
             if (static_cast<APlayerController*>(C)->bIsLocalPlayerController) continue;
-            //const FVector A = static_cast<FVector&>(CI.Char->AimOffsets);
             const FVector A = reinterpret_cast<FVector&>(CI.Char->AimOffsets);
             if (A.X == 0.f && A.Y == 0.f && A.Z == 0.f) continue;
             const FRotator CR = C->ControlRotation;
@@ -2365,13 +2391,15 @@ namespace
     {
         GEngaged.clear();
         GEngagingHuman.clear();
+
         for (const FBot& B : GBots)
+        {
             if (B.State == EBotState::Combat && B.Target && B.TargetIndex >= 0)
             {
                 ++GEngaged[B.TargetIndex];
-                if (B.Target && !IsBotChar(B.Target) && B.PawnIndex >= 0)
-                    GEngagingHuman.insert(B.PawnIndex);
+                if (B.Target && !IsBotChar(B.Target) && B.PawnIndex >= 0) GEngagingHuman.insert(B.PawnIndex);
             }
+        }
     }
 
     ATslCharacter* FindTarget(FBot& B, const FVector& MyLoc, const FVector& Fwd, bool bAlert, int32& OutIndex, FVector& OutLoc, float& OutDist)
@@ -2592,6 +2620,171 @@ namespace
         }
     }
 
+    // Weak references use -1 for an empty object. The generated SDK Get()
+    // indexes without checking it, which caused the captured Vikendi crash.
+    UObject* SafeWeakGet(const FWeakObjectPtr& Ref)
+    {
+        TUObjectArray* Array = UObject::GObjects.GetTypedPtr();
+        if (!Array || Ref.ObjectIndex < 0 || Ref.ObjectIndex >= Array->Num()) return nullptr;
+        FUObjectItem* Items = Array->GetDecrytedObjPtr();
+        if (!Items) return nullptr;
+        const FUObjectItem& Item = Items[Ref.ObjectIndex];
+        const int32 Flags = *reinterpret_cast<const int32*>(&Item.Pad_8[0]);
+        if (!Item.Object || (Flags & ((1 << 29) | (1 << 28)))) return nullptr;
+        return Item.Object;
+    }
+
+    // 2017-style registry check adapted to the 2019 object array. The saved
+    // index is used without dereferencing the possibly destroyed object.
+    bool LiveBotObject(const UObject* Object, int32 Index)
+    {
+        if (!Object || Index < 0) return false;
+        TUObjectArray* Array = UObject::GObjects.GetTypedPtr();
+        if (!Array || Index >= Array->Num()) return false;
+        FUObjectItem* Items = Array->GetDecrytedObjPtr();
+        if (!Items || Items[Index].Object != Object) return false;
+        const int32 Flags = *reinterpret_cast<const int32*>(&Items[Index].Pad_8[0]);
+        return (Flags & ((1 << 29) | (1 << 28))) == 0;
+    }
+
+    bool FindBuildingForJump(UWorld* World, const FVector& PlanePos, const FVector& Side, FVector& Out)
+    {
+        std::vector<std::pair<float, FVector>> Candidates;
+        for (const FVector& P : GBuildingTargets)
+        {
+            const FVector D = Flat(P - PlanePos); const float Distance = Len(D);
+            if (Distance < 10000.f || Distance > 180000.f) continue;
+            const float Alignment = SafeNormal(D).Dot(Side);
+            if (Alignment < 0.65f) continue;
+            const float Score = Distance * (1.f + (1.f - Alignment));
+            const auto At = std::lower_bound(Candidates.begin(), Candidates.end(), Score, [](const auto& A, float Value) { return A.first < Value; });
+            Candidates.insert(At, { Score, P });
+            if (Candidates.size() > 5) Candidates.pop_back();
+        }
+        const size_t Limit = (std::min)(Candidates.size(), (size_t)5);
+        for (size_t i = 0; i < Limit; ++i)
+        {
+            FVector Ground; const FVector P = Candidates[i].second;
+            if (TraceLand(World, P.X, P.Y, Ground) && !IsWaterGround(Ground.Z)) { Out = P; return true; }
+        }
+        return false;
+    }
+
+    bool FindSkyShore(UWorld* World, const FVector& Here, FVector& Out)
+    {
+        const float Radii[] = { 10000.f, 30000.f, 60000.f };
+
+        for (float Radius : Radii) for (int i = 0; i < 8; ++i)
+        {
+            const float A = (float)i * (kPi / 4.f); FVector G;
+            if (TraceLand(World, Here.X + std::cos(A) * Radius, Here.Y + std::sin(A) * Radius, G) && !IsWaterGround(G.Z))
+            {
+                Out = G;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Test-only terrain measurement: ignore characters and reject any hit
+    // that begins inside an object or is not a stationary world surface.
+    bool TraceSkyGround(UWorld* World, ATslCharacter* Me, const FVector& Here, FVector& Out)
+    {
+        std::vector<AActor*> Ignored;
+        Ignored.reserve(GBots.size() + GChars.size() + 1);
+        Ignored.push_back(Me);
+        for (const FBot& Bot : GBots)
+            if (Bot.Pawn != Me && LiveBotObject(Bot.Pawn, Bot.PawnIndex)) Ignored.push_back(Bot.Pawn);
+        for (const FCharInfo& Char : GChars)
+            if (Char.Char != Me && LiveBotObject(Char.Char, Char.Index)) Ignored.push_back(Char.Char);
+        TArray<AActor*> Ignore(Ignored.data(), (int32)Ignored.size(), (int32)Ignored.size());
+        FHitResult Hit{};
+        FLinearColor Color{};
+        bool Found = UKismetSystemLibrary::LineTraceSingle(World, V(Here.X, Here.Y, Here.Z - 150.f), V(Here.X, Here.Y, -30000.f),
+            ETraceTypeQuery::TraceTypeQuery1, false, Ignore, EDrawDebugTrace::None, &Hit, true, Color, Color, 0.f);
+
+        auto* Component = Found ? static_cast<UPrimitiveComponent*>(SafeWeakGet(Hit.Component)) : nullptr;
+        if (!Found || !Hit.bBlockingHit || Hit.bStartPenetrating || Hit.ImpactNormal.Z < 0.6f || !Component || Component->Mobility != EComponentMobility::Static)
+            return false;
+
+        Out = V(Hit.ImpactPoint.X, Hit.ImpactPoint.Y, Hit.ImpactPoint.Z);
+        return true;
+    }
+
+    // Check only the actual landscape collision, never a roof or floor. A
+    // pair of hits prevents a one-off trace from moving a bot unnecessarily.
+    bool GuardBotBelowTerrain(UWorld* World, FBot& B, double T)
+    {
+        ATslCharacter* Me = B.Pawn;
+        if (!GMatchSpawnDone || !Me || B.Hidden || B.NativeSkyActive || B.DropPending || Me->IsInAircraft() || Me->IsFallingWithParachute() || Me->IsSwimming())
+        {
+            B.UndergroundChecks = 0; return false;
+        }
+
+        auto* Move = Me->GetTslCharacterMovement();
+        if (!Move || Move->MovementMode != EMovementMode::MOVE_Walking)
+        {
+            B.UndergroundChecks = 0;
+            return false;
+        }
+
+        if (T < B.NextTerrainCheck || T < GNextBotTerrainTrace)
+            return B.UndergroundChecks > 0;
+
+        GNextBotTerrainTrace = T + 0.05;
+        B.NextTerrainCheck = T + (B.UndergroundChecks ? 0.3 : 8.0 + RandF(0.f, 4.f));
+        const FVector Here = Me->K2_GetActorLocation();
+        AActor* IgnoreItem[] = { Me };
+        TArray<AActor*> Ignore(IgnoreItem, 1, 1);
+
+        FHitResult Hit{};
+        FLinearColor Color{};
+        const bool Found = UKismetSystemLibrary::LineTraceSingle(World, Here + V(0.f, 0.f, 6000.f), Here - V(0.f, 0.f, 1000.f),
+            ETraceTypeQuery::TraceTypeQuery1, false, Ignore, EDrawDebugTrace::None, &Hit, true, Color, Color, 0.f);
+
+        auto* Component = Found ? SafeWeakGet(Hit.Component) : nullptr;
+        const float Depth = Found ? Hit.ImpactPoint.Z - Here.Z : 0.f;
+        if (!Found || !Hit.bBlockingHit || Hit.bStartPenetrating || !Component || !Component->IsA(ULandscapeHeightfieldCollisionComponent::StaticClass()) || Depth < 250.f || Depth > 5000.f)
+        {
+            B.UndergroundChecks = 0;
+            return false;
+        }
+
+        StopFire(B);
+        if (++B.UndergroundChecks < 2)
+            return true;
+
+        FHitResult MoveHit{};
+        const FVector Surface = V(Here.X, Here.Y, Hit.ImpactPoint.Z + 110.f);
+        if (Me->K2_SetActorLocation(Surface, false, &MoveHit, true))
+        {
+            Move->StopMovementImmediately(); Me->ForceNetUpdate();
+            B.HasDest = false; B.NextRoamPick = T + 1.0;
+            BLOG("TERRAIN " + B.Name + " recovered from " + std::to_string((int)Depth) + " cm below landscape");
+        }
+
+        B.UndergroundChecks = 0; B.NextTerrainCheck = T + 2.0;
+        return true;
+    }
+
+    // Only repair this AI controller's empty PlayerState name. ChangeName and
+    // the generic property setter were observed to leave this field empty.
+    void RepairBotPlayerName(AController* Ctrl, const std::string& Name)
+    {
+        if (!Ctrl || !Ctrl->IsA(AAIController::StaticClass()) || !Ctrl->PlayerState)
+            return;
+
+        APlayerState* PS = Ctrl->PlayerState;
+        if (!PS->PlayerName.ToString().empty())
+            return;
+
+        if (SetGameString(&PS->PlayerName, Name))
+        {
+            PS->ForceNetUpdate();
+            BLOG("Bot player name assigned: " + Name);
+        }
+    }
+
     void UpdateBot(UWorld* World, FBot& B, double T)
     {
         if (!B.Ctrl)
@@ -2647,6 +2840,18 @@ namespace
         }
 
         ATslCharacter* Me = B.Pawn;
+        if (T >= B.NextBotNameCheck && LiveBotObject(B.Ctrl, B.CtrlIndex))
+        {
+            B.NextBotNameCheck = T + 15.0;
+            RepairBotPlayerName(B.Ctrl, B.Name);
+        }
+        if (B.GroundProbeAt > 0.0 && T >= B.GroundProbeAt) {
+            const FVector P = Me->K2_GetActorLocation();
+            const float DX = P.X - B.GroundProbePos.X, DY = P.Y - B.GroundProbePos.Y;
+            auto* Move = Me->GetTslCharacterMovement();
+            auto* WP = Me->WeaponProcessor;
+            B.GroundProbePos = P; B.GroundProbeAt = T + 10.0;
+        }
 
         if (B.Hidden)
         {
@@ -2669,6 +2874,25 @@ namespace
         if (Me->IsInAircraft())
         {
             StopFire(B);
+            // Private experiment: initialize only bot components before their ejection.
+            if (!B.SkyPrepareAttempted)
+            {
+                B.SkyPrepareAttempted = true;
+                if (!Me->SkydivingComponent && !Me->SkydivingComponentClass.AssetLongPathname.ToString().empty())
+                {
+                    Me->CreateSkydiveComponent();
+                    if (Me->SkydivingComponent)
+                    {
+                        Me->InitilizeServerSkydiveComp();
+                        auto* Sky = Me->SkydivingComponent;
+                        auto* Move = Me->GetTslCharacterMovement();
+                        if (!Sky->CharacterMovementRef && Move) Sky->CharacterMovementRef = Move;
+                        // Request opening ourselves at the measured low altitude.
+                        Sky->ParachuteDeploySettings.bUseAutoDeploy = false;
+                        Me->ForceNetUpdate();
+                    }
+                }
+            }
             if (B.EjectAt <= 0.0)
             {
                 B.EjectAt = T + RandF(S.EjectMin, S.EjectMax);
@@ -2679,13 +2903,15 @@ namespace
                 B.NextEjectTry = T + 2.0;
                 bool bFound = false;
 
-                for (int32 i = 0; i < UObject::GObjects->Num(); ++i)
+                // The native preparer owns the current aircraft. Scanning the
+                // complete global object array independently for every bot can
+                // stall the server just as the jump timers start expiring.
+                auto* GM = static_cast<ATslGameMode*>(World->AuthorityGameMode);
+                auto* Prep = GM ? GM->MatchPreparer : nullptr;
+                if (!Prep || !Prep->IsA(UAirborneMatchPreparer::StaticClass())) return;
+                for (auto* Plane : static_cast<UAirborneMatchPreparer*>(Prep)->Aircrafts)
                 {
-                    UObject* O = UObject::GObjects->GetByIndex(i);
-                    if (!O || O->IsDefaultObject() || !O->IsA(ATransportAircraftVehicle::StaticClass()))
-                        continue;
-
-                    ATransportAircraftVehicle* Plane = static_cast<ATransportAircraftVehicle*>(O);
+                    if (!Plane) continue;
                     UTslVehicleSeatComponent* Seat = Plane->VehicleSeatComponent;
                     if (!Seat)
                         continue;
@@ -2728,6 +2954,23 @@ namespace
                             break;
                         }
                     }
+                    if (!B.SkyDirectionSet)
+                    {
+                        const FVector Forward = SafeNormal(Flat(Plane->GetActorForwardVector()));
+                        const float PlaneYaw = std::atan2(Forward.Y, Forward.X) * 180.f / kPi;
+                        const float Sign = (GJumpSide++ & 1u) ? -1.f : 1.f;
+                        const FVector Side = V(-Forward.Y * Sign, Forward.X * Sign, 0.f);
+
+                        B.SkyHeading = PlaneYaw + Sign * 90.f;
+                        B.HasSkyTarget = FindBuildingForJump(World, Plane->K2_GetActorLocation(), Side, B.SkyTarget);
+                        if (B.HasSkyTarget)
+                        {
+                            const FVector D = Flat(B.SkyTarget - Plane->K2_GetActorLocation());
+                            B.SkyHeading = std::atan2(D.Y, D.X) * 180.f / kPi;
+                        }
+
+                        B.SkyDirectionSet = true;
+                    }
                     Seat->TryToLeave(Me, B.EjectTries >= 2);
                     B.DropPending = S.SuperheroDrop;
                     B.DropTries = 0;
@@ -2745,20 +2988,159 @@ namespace
                     if (S.VerboseLog || B.EjectTries == 0)
                         BLOG(B.Name + " jumps out of the plane" + (B.EjectTries ? " (try " + std::to_string(B.EjectTries + 1) + ")" : std::string()));
                     if (bMine) break;
-
-                    if (!bFound && B.EjectTries == 0)
-                        BLOG(B.Name + " is in the plane but no plane lists it as a rider - retrying");
-                    ++B.EjectTries;
-
                 }
+                if (!bFound && B.EjectTries == 0)
+                    BLOG(B.Name + " is in the plane but no plane lists it as a rider - retrying");
+                ++B.EjectTries;
             }
             return;
         }
         B.EjectAt = 0.0;
         B.EjectTries = 0;
+        // Also initialize bots ejected automatically at the end of the flight.
+        if (B.SkyPrepareAttempted && B.JumpedAt <= 0.0 && !B.SkyStartAttempted)
+        {
+            B.JumpedAt = T;
+            B.DropPending = S.SuperheroDrop;
+            B.DropTries = 0;
+            B.NoFireUntil = T + 120.0;
+        }
+        if (B.JumpedAt > 0.0 && !B.SkyStartAttempted)
+        {
+            B.SkyStartAttempted = true;
+            auto* Sky = Me->SkydivingComponent;
+            if (!B.SkyDirectionSet)
+            {
+                const FVector Forward = SafeNormal(Flat(Me->GetActorForwardVector()));
+                B.SkyHeading = std::atan2(Forward.Y, Forward.X) * 180.f / kPi + ((GJumpSide++ & 1u) ? -90.f : 90.f);
+                B.SkyDirectionSet = true;
+            }
+            if (Sky)
+            {
+                Sky->Server_SetSkydiveState(ESkydiveState::Skydive_Freefall);
+                // TEST: local ProcessEvent with RPC routing disabled.
+                // Restore shared UFunction flags immediately after the call.
+                if (Sky->SkydiveState == ESkydiveState::Skydive_None)
+                {
+                    auto* Fn = Sky->GetClass()->GetFunction("TslSkydiveComponent", "Server_SetSkydiveState");
+                    if (Fn)
+                    {
+                        const auto Flags = Fn->FunctionFlags;
+                        Params::TslSkydiveComponent_Server_SetSkydiveState Args{};
+                        Args.InSkydiveState = ESkydiveState::Skydive_Freefall;
+                        Fn->FunctionFlags = (Flags & ~0x40u) | 0x400u;
+                        Sky->ProcessEvent(Fn, &Args);
+                        Fn->FunctionFlags = Flags;
+                    }
+                }
+                // TEST: check replicated state-driven animation.
+                // This bypasses the normal state machine and is not a release fix.
+                if (Sky->SkydiveState == ESkydiveState::Skydive_None && Sky->CharacterMovementRef)
+                {
+                    Sky->SkydiveState = ESkydiveState::Skydive_Freefall;
+                    Sky->CharacterMovementRef->SetMovementMode(EMovementMode::MOVE_Custom, 1);
+                }
+                Me->ForceNetUpdate();
+                B.NativeSkyActive = Sky->SkydiveState != ESkydiveState::Skydive_None;
+            }
+        }
+        if (B.NativeSkyActive && Me->SkydivingComponent)
+        {
+            auto* Sky = Me->SkydivingComponent;
+            // Native skydive forward input, equivalent to holding W. Feed the
+            // desired heading to the server simulation, not teleport movement.
+            const FVector Here = Me->K2_GetActorLocation();
+            if (B.HasSkyTarget)
+            {
+                const FVector Delta = Flat(B.SkyTarget - Here);
+                if (Len(Delta) > 3000.f) B.SkyHeading = std::atan2(Delta.Y, Delta.X) * 180.f / kPi;
+            }
+            if (T >= B.NextSkySteer)
+            {
+                B.NextSkySteer = T + 1.0;
+                Sky->TargetHeading = B.SkyHeading;
+                Sky->TargetInputForward = (B.HasSkyTarget && Len(Flat(B.SkyTarget - Here)) <= 3000.f) ? 0.f : 1.f;
+                Sky->TartgetInputRight = 0.f;
+                if (B.Ctrl) B.Ctrl->SetControlRotationBP(FRotator{ 0.f, B.SkyHeading, 0.f });
+                const char* Names[] = { "Server_SetPlayerHeading", "Server_SetForwardInput" };
+                const float Values[] = { B.SkyHeading, Sky->TargetInputForward };
+                for (int i = 0; i < 2; ++i)
+                {
+                    UFunction* Fn = Sky->GetClass()->GetFunction("TslSkydiveComponent", Names[i]);
+                    if (!Fn) continue;
+                    const auto Flags = Fn->FunctionFlags;
+                    Fn->FunctionFlags = (Flags & ~0x40u) | 0x400u;
+                    float Arg = Values[i]; Sky->ProcessEvent(Fn, &Arg);
+                    Fn->FunctionFlags = Flags;
+                }
+            }
+            if (T >= B.NextSkyGroundCheck)
+            {
+                B.NextSkyGroundCheck = T + 0.2;
+                FVector Ground;
+                // Start below the pawn's capsule so the trace does not hit the bot.
+                const bool HasGround = TraceSkyGround(World, Me, Here, Ground);
+                if (HasGround)
+                {
+                    // The down trace sees the sea floor. Near the coast, use
+                    // the known or configured sea surface instead of forcing
+                    // a walking-mode landing at the bottom of the ocean.
+                    const float WaterZ = SeaZ() > -1e8f ? SeaZ() : 0.f;
+                    const bool OverWater = IsWaterGround(Ground.Z);
+                    const float LandingZ = OverWater ? (std::max)(Ground.Z, WaterZ) : Ground.Z;
+                    const float Altitude = Here.Z - LandingZ;
+                    // Re-aim toward dry land before reaching the sea, with a
+                    // global budget so 95 bots do not all trace at once.
+                    if (OverWater && Altitude < 70000.f && T >= B.NextSkyShoreSearch && T >= GNextSkyShoreSearch)
+                    {
+                        B.NextSkyShoreSearch = T + 15.0; GNextSkyShoreSearch = T + 0.75;
+                        FVector Land{};
+                        if (FindSkyShore(World, Here, Land))
+                        {
+                            B.SkyTarget = Land; B.HasSkyTarget = true;
+                            BLOG("SKY WATER " + B.Name + " steering toward land " + Pos(Land));
+                        }
+                    }
+                    // User-requested 300 m above the terrain, measured in cm.
+                    const float DeployAt = 30000.f;
+                    if (T >= B.NextSkyLog)
+                    {
+                        B.NextSkyLog = T + 5.0;
+                    }
+                    if (Altitude <= DeployAt && Sky->SkydiveState == ESkydiveState::Skydive_Freefall && T >= B.NextSkyRequest)
+                    {
+                        B.NextSkyRequest = T + 1.0;
+                        Sky->Server_RequestParachuteOpen();
+                    }
+                    if (Altitude <= 2000.f && Altitude >= -100.f) {
+                        FHitResult Hit{};
+                        const FVector Dest = V(Ground.X, Ground.Y, LandingZ + 110.f);
+                        if (Me->K2_SetActorLocation(Dest, false, &Hit, true)) {
+                            Sky->Server_StopParachuting(false, 0, 0.0f);
+                            Sky->Multi_DetachParachute();
+                            Sky->SkydiveState = ESkydiveState::Skydive_None;
+                            auto* Move = Me->GetTslCharacterMovement();
+                            if (Move) { Move->StopMovementImmediately(); Move->SetMovementMode(OverWater ? EMovementMode::MOVE_Falling : EMovementMode::MOVE_Walking, 0); }
+                            Me->SetActorHiddenInGame(false);
+                            Me->SetActorEnableCollision(true);
+                            Me->ForceNetUpdate();
+                            B.NativeSkyActive = false; B.DropPending = false; B.DropTries = 1;
+                            B.NoFireUntil = T + S.LandingGrace; B.SpawnedAt = T;
+                            B.GroundProbePos = Dest; B.GroundProbeAt = T + 10.0;
+                            B.HasDest = false; B.HasDry = false;
+                            return;
+                        }
+                    }
+                }
+            }
+            if (T < B.JumpedAt + 120.0) return;
+            B.NativeSkyActive = false;
+            B.DropPending = true; B.NextDropTry = T; B.HoldFor = 0.0;
+        }
 
-        AActor* Chute = (AActor*)Me->ParachuteType;
-        const bool bChute = Chute;
+        // In 2019 ParachuteType is a UClass*, not a live actor. The 2017
+        // GetParachute() API does not exist here; never cast the class to an actor.
+        const bool bChute = Me->IsFallingWithParachute();
 
         if (B.DropPending && T >= B.NextDropTry)
         {
@@ -2774,18 +3156,15 @@ namespace
             FHitResult Hit{};
             if (bChute)
             {
-                Chute->K2_SetActorLocation(Dest + V(0.f, 0.f, 150.f), false, &Hit, true);
                 Me->Server_SetParachuteLandingAssist(true);
                 Me->SetParachuteLandingAssist(true);
-                Me->OnLanded(Hit);
             }
             Me->K2_SetActorLocation(Dest, false, &Hit, true);
             if (Me->GetTslCharacterMovement())
                 Me->GetTslCharacterMovement()->StopMovementImmediately();
             ++B.DropTries;
             // done once it is no longer on a parachute / falling from height
-            AActor* After = (AActor*)Me->ParachuteType;
-            const bool bStillChute = After && !Me->IsInAircraft() && Me->IsFallingWithParachute();
+            const bool bStillChute = !Me->IsInAircraft() && Me->IsFallingWithParachute();
             if (!bStillChute || B.DropTries >= 4)
             {
                 B.DropPending = false;
@@ -2834,97 +3213,54 @@ namespace
         B.ReleaseAlt = 0.f;
         B.ChuteLogged = false;
 
-        // ---------------------------------------------------------------- water guard
+        // Swimming takes priority over combat and ordinary navigation.
+        // Find a nearby point above the local water surface and steer there;
+        // do not destroy or teleport a bot merely because it landed in water.
         {
-            const bool bWet = Me->IsSwimming(); // IsInWaterVolume is true on land near the coast
+            const bool bWet = Me->IsSwimming();
             const FVector Here = Me->K2_GetActorLocation();
             if (!bWet)
             {
-                B.HasDry = true;
-                B.LastDry = Here;
-                B.SwimSince = 0;
+                B.HasDry = true; B.LastDry = Here; B.SwimSince = 0;
+                B.HasShoreTarget = false; B.NextShoreSearch = 0;
             }
-            else if (B.SwimSince <= 0)
+            else
             {
-                B.SwimSince = T;
-            }
-            else if (T - B.SpawnedAt < 8.0 || !B.HasDry)
-            {
-                // spawned in water: learn where the surface is, then teleport somewhere dry
+                if (B.SwimSince <= 0) B.SwimSince = T;
+                StopFire(B);
                 const float Surf = Me->GetCurrentWaterSurfaceZ();
-                if (Surf > -1e6f && Surf < 1e6f && Surf != 0.f && (GSeaZ < -1e8f || Surf < GSeaZ))
+                if (std::isfinite(Surf) && Surf > -1e6f && Surf < 1e6f && Surf != 0.f && (GSeaZ < -1e8f || Surf < GSeaZ)) GSeaZ = Surf;
+                if (T >= B.NextShoreSearch)
                 {
-                    GSeaZ = Surf;
-                    BLOG("Learned water level Z " + std::to_string((int)Surf) + " - spawn points below that are skipped now");
-                }
-                if (++B.WaterMoves > 10)
-                {
-                    BLOG(B.Name + " kept landing in water - removing it");
-                    UnregisterBotTeam(World, B);
-                    if (B.Pawn) B.Pawn->K2_DestroyActor();
-                    UncountJoin(B);
-                    DestroyBotController(B);
-                    B.Remove = true;
-                    return;
-                }
-                FVector NewLoc;
-                if (FindRandomSpawn(World, NewLoc))
-                {
-                    NewLoc.Z += 110.f;
-                    FHitResult Hit{};
-                    Me->K2_SetActorLocation(NewLoc, false, &Hit, true);
-                    B.ProgressPos = NewLoc;
-                    B.HasDest = false;
-                    B.SpawnedAt = T; // give the new spot its own check window
-                    BLOG(B.Name + " spawned in water - moved inland to " + std::to_string((int)NewLoc.X) + "," + 
-                        std::to_string((int)NewLoc.Y) + "," + std::to_string((int)NewLoc.Z) + " (try " + std::to_string(B.WaterMoves) + ")");
-                }
-                return; // re-check next think before doing anything else
-            }
-            else if (B.HasDry && T - B.SwimSince > 10.0)
-            {
-                // input steering doesn't get it out of the water - put it back on its last dry spot
-                FHitResult Hit{};
-                Me->K2_SetActorLocation(B.LastDry + V(0.f, 0.f, 60.f), false, &Hit, true);
-                B.SwimSince = 0;
-                B.HasDest = false;
-                B.NextRoamPick = T + 1.0;
-                B.InlandNext = true;
-                if (T - B.SwimResetWindow > 120.0) { B.SwimResetWindow = T; B.SwimResets = 0; }
-                ++B.SwimResets;
-                if (S.VerboseLog) BLOG(B.Name + " was stuck swimming - put back on land");
-                // keeps ending up in the water here (coast / islet): move it once to dry land further inland,
-                // only when no player is close enough to see it
-                float HD; FVector HL;
-                if (B.SwimResets >= 3 && !NearestHuman(B.LastDry, 30000.f, HD, HL))
-                {
-                    FVector ZC{}; float ZR = 0.f;
-                    FVector Toward = GetSafeCircle(World, ZC, ZR) ? ZC : V(408000.f, 408000.f, 0.f);
-                    const FVector Dir = SafeNormal(Flat(Toward - B.LastDry));
-                    const FVector Aim = B.LastDry + Dir * RandF(20000.f, 50000.f);
-                    FVector G;
-                    if (FindLandNear(World, Aim.X, Aim.Y, G) && !NearestHuman(G, 30000.f, HD, HL))
+                    B.NextShoreSearch = T + 8.0 + RandF(0.f, 2.f);
+                    bool Found = false; FVector Shore{};
+                    if (B.HasDry && Len(Flat(B.LastDry - Here)) > 100.f) { Shore = B.LastDry; Found = true; }
+                    if (!Found && std::isfinite(Surf) && Surf > -1e6f && Surf < 1e6f)
                     {
-                        Me->K2_SetActorLocation(G + V(0.f, 0.f, 110.f), false, &Hit, true);
-                        B.LastDry = G;
-                        B.Home = G;
-                        B.SwimResets = 0;
-                        BLOG(B.Name + " kept walking into water - moved inland to " + Pos(G));
+                        const float Radii[] = { 5000.f, 15000.f, 30000.f, 60000.f, 120000.f };
+                        for (float Radius : Radii)
+                        {
+                            for (int i = 0; i < 8; ++i)
+                            {
+                                const float A = (float)i * (kPi / 4.f); FVector G;
+                                if (TraceLand(World, Here.X + std::cos(A) * Radius, Here.Y + std::sin(A) * Radius, G) && G.Z > Surf + 50.f)
+                                {
+                                    Shore = G; Found = true; break;
+                                }
+                            }
+                            if (Found) break;
+                        }
                     }
+                    if (!Found) {
+                        FVector Circle{}; float Radius = 0.f;
+                        if (GetSafeCircle(World, Circle, Radius) && Len(Flat(Circle - Here)) > 100.f) { Shore = Circle; Found = true; }
+                    }
+                    B.HasShoreTarget = Found;
+                    if (Found) B.ShoreTarget = Shore;
+                    const auto* Breath = Me->BreathComponent;
                 }
+                B.HasDest = false;
                 return;
-            }
-            else if (B.HasDry && B.State != EBotState::Combat)
-            {
-                // walked into water: head back to the last dry spot
-                if (T >= B.NextWaterLog && S.VerboseLog)
-                {
-                    BLOG(B.Name + " is swimming - heading back to land");
-                    B.NextWaterLog = T + 30.0;
-                }
-                if (!B.HasDest || Len(Flat(B.Dest - B.LastDry)) > 50.f)
-                    MoveTo(World, B, B.LastDry, T, false);
-                B.NextRoamPick = T + 3.0;
             }
         }
 
@@ -2935,6 +3271,7 @@ namespace
             StopFire(B);
             return;
         }
+        if (GuardBotBelowTerrain(World, B, T)) return;
 
         if (!B.Armed && T >= B.NextArmTry && (!S.UnarmedInLobby || (GMatchSpawnDone && !Me->IsInAircraft() && !B.DropPending && !B.Hidden))) TryArm(B, T);
         ATslWeapon_Gun* Gun = B.Armed ? Me->GetWeaponGun() : nullptr;
@@ -2960,7 +3297,7 @@ namespace
             {
                 if (HitRep != B.LastHitRep)
                 {
-                    UObject* PSO = Me->LastTakeHitInfo.PlayerInstigator.Get();
+                    UObject* PSO = SafeWeakGet(Me->LastTakeHitInfo.PlayerInstigator);
                     if (PSO)
                     {
                         for (const FCharInfo& C : GChars)
@@ -3033,7 +3370,7 @@ namespace
             if (H)
             {
                 B.NextWhyLog = T + 10.0;
-                const char* Why = !Gun ? "no gun in its hands (re-arming)" : bDowned ? "it is downed" : T < B.NoFireUntil ? "landing grace" : 
+                const char* Why = !Gun ? "no gun in its hands (re-arming)" : bDowned ? "it is downed" : T < B.NoFireUntil ? "landing grace" :
                     !B.Ctrl->LineOfSightTo(H, V(0, 0, 0), false) ? "no line of sight" : "not facing you";
 
                 BLOG(B.Name + " is " + std::to_string((int)(HD / 100.f)) + " m from " + CharName(H) + " but not fighting: " + Why);
@@ -3105,7 +3442,7 @@ namespace
                 {
                     Me->Crouch(false);
                 }
-                
+
                 B.Crouched = !B.Crouched;
                 B.NextCrouchFlip = T + RandF(0.25f, 0.6f);
             }
@@ -3221,7 +3558,7 @@ namespace
 
                         Me->K2_SetActorLocation(G + V(0.f, 0.f, 110.f), false, &Hit, true);
                         if (Me->GetTslCharacterMovement()) Me->GetTslCharacterMovement()->StopMovementImmediately();
-                        BLOG(B.Name + " caught up with its player (" + std::to_string((int)(HD / 100.f)) + " m away" + 
+                        BLOG(B.Name + " caught up with its player (" + std::to_string((int)(HD / 100.f)) + " m away" +
                             (B.SwimResets >= 2 ? ", kept hitting water" : "") + ") - now " + std::to_string((int)(GD2 / 100.f)) + " m away");
 
                         B.SwimResets = 0;
@@ -3536,6 +3873,7 @@ namespace
     // the game's counters, so JOINED / "X left" / ranks include the bots.
     void SyncGameCounters(UWorld* World)
     {
+        if (!World || !World->AuthorityGameMode) return;
         AGameStateBase* GSB = World->AuthorityGameMode->GameState;
         if (!GSB)
         {
@@ -3549,39 +3887,25 @@ namespace
         auto AddTeam = [&Teams](int32 T) { if (std::find(Teams.begin(), Teams.end(), T) == Teams.end()) Teams.push_back(T); };
 
         int Humans = 0;
-        for (const FCharInfo& CI : GChars)
-        {
-            if (CI.IsBot) continue;
-            // a living non-bot character is a human - even while sitting in the plane, where its
-            // controller is busy with the seat (counting only PlayerController-possessed characters
-            // read 0 humans in the plane and the solo match ended)
-            AController* C = CI.Char->Controller;
-            if (C && static_cast<APlayerController*>(C)->bIsLocalPlayerController) continue; // listen-server ghost
-
-            if (!C && !C->PlayerState && !CI.Char->IsInAircraft()) continue;
-            ++Humans;
-
-            if (C->PlayerState->IsA(ATslPlayerState::StaticClass())) {
-                AddTeam(static_cast<ATslPlayerState*>(C->PlayerState)->TeamNumber);
-            }
-            else {
-                AddTeam(-1000 - Humans);
-            }
-        }
-        // players in a vehicle have no controller on their character - count logged-in, not-killed players too
-        int HumansPS = 0;
+        int JoinedHumans = 0;
+        std::unordered_set<APlayerController*> CountedControllers;
+        // PlayerState/NetConnection survive the native aircraft handoff, during
+        // which the old lobby pawn may be dying or temporarily unpossessed.
+        // Exclude our registered bot states and the listen-server local ghost.
         for (APlayerState* PS : GS->PlayerArray)
         {
-            if (!PS || PS->bIsABot || !PS->IsA(ATslPlayerState::StaticClass())) continue;
-            ATslPlayerState* TslPlayerState = static_cast<ATslPlayerState*>(PS);
-            if (TslPlayerState->bKilled || TslPlayerState->bQuitter) continue;
-            AActor* OwnerPC = PS->GetOwner();
-            if (!OwnerPC) continue;
-            if (static_cast<APlayerController*>(OwnerPC)->IsLocalPlayerController()) continue; // listen-server ghost
-            ++HumansPS;
-            AddTeam(TslPlayerState->TeamNumber);
+            if (!PS || PS->bIsSpectator || PS->bOnlySpectator || IsBotPS(PS) || !PS->IsA(ATslPlayerState::StaticClass())) continue;
+            AActor* Owner = PS->GetOwner();
+            if (!Owner || !Owner->IsA(APlayerController::StaticClass())) continue;
+            auto* PC = static_cast<APlayerController*>(Owner);
+            if (!PC->NetConnection || PC->bIsLocalPlayerController || !CountedControllers.insert(PC).second) continue;
+            auto* State = static_cast<ATslPlayerState*>(PS);
+            if (State->bQuitter) continue;
+            ++JoinedHumans;
+            if (State->bKilled) continue;
+            ++Humans;
+            AddTeam(State->TeamNumber);
         }
-        if (HumansPS > Humans) Humans = HumansPS;
         int Bots = 0;
         for (const FBot& B : GBots)
         {
@@ -3609,23 +3933,15 @@ namespace
         GCountGS = GS;
         GCountGSIndex = GS->GetIndex();
         GCountsInMatch = GMatchSpawnDone;
-        if (!GMatchSpawnDone)
+        GWantJoined = JoinedHumans + Bots;
+        GWantAlive = Humans + Bots;
+        GWantTeams = GTeamsAlive;
+        // Seed all counters in the lobby too: the native start callback can
+        // otherwise evaluate a solo win before our next periodic AI think.
+        if (!GMatchSpawnDone || Now() - GMatchStartedAt < 90.0)
         {
-            // lobby: everyone the game counted (logged-in player states) + our bots
-            int Joined = 0;
-            for (APlayerState* PS : GS->PlayerArray)
-                if (PS && !PS->bIsABot && !IsBotPS(PS)) ++Joined;
-            GWantJoined = Joined + Bots;
-        }
-        else
-        {
-            GWantAlive = Humans + Bots;
-            GWantTeams = GTeamsAlive;
-            if (Now() - GMatchStartedAt < 90.0)
-            {
-                GStartPlayers = (std::max)(GStartPlayers, GWantAlive);
-                GStartTeams = (std::max)(GStartTeams, GWantTeams);
-            }
+            GStartPlayers = (std::max)(GStartPlayers, GWantAlive);
+            GStartTeams = (std::max)(GStartTeams, GWantTeams);
         }
         GHaveCounts = true;
     }
@@ -3634,56 +3950,35 @@ namespace
     // ProcessEvent call on the game thread so ours is the last value before replication.
     void ApplyCounters()
     {
-        if (!GHaveCounts || !GCountGS)
+        if (GetCurrentThreadId() != GGameThreadId || !GHaveCounts || !GCountGS || GCountGSIndex < 0 || GCountGSIndex >= UObject::GObjects->Num() || UObject::GObjects->GetByIndex(GCountGSIndex) != GCountGS)
             return;
 
-        if (!GCountsInMatch)
+        if (GLastWroteAlive >= 0 && (GCountGS->NumAlivePlayers != GLastWroteAlive || GCountGS->NumAliveTeams != GLastWroteTeams))
         {
-            GCountGS->NumJoinPlayers = GWantJoined;
-        }
-        else
-        {
-            // anything different from what we wrote last time was written by the game itself
-            if (GLastWroteAlive >= 0 && (GCountGS->NumAlivePlayers != GLastWroteAlive || GCountGS->NumAliveTeams != GLastWroteTeams))
-            {
-                GNatAlive = GCountGS->NumAlivePlayers;
-                GNatTeams = GCountGS->NumAliveTeams;
-            }
-
-            GCountGS->NumAlivePlayers = GWantAlive;
-            GCountGS->NumAliveTeams = GWantTeams;
-
-            if (GStartPlayers > 1)
-            {
-                GCountGS->NumStartPlayers = GStartPlayers;
-                GCountGS->NumStartTeams = GStartTeams;
-            }
-
-            GLastWroteAlive = GWantAlive;
-            GLastWroteTeams = GWantTeams;
+            GNatAlive = GCountGS->NumAlivePlayers;
+            GNatTeams = GCountGS->NumAliveTeams;
         }
 
-        if (!GIsTeamSet)
+        GCountGS->NumJoinPlayers = GCountsInMatch ? GStartPlayers : GWantJoined;
+        GCountGS->NumAlivePlayers = GWantAlive;
+        GCountGS->NumAliveTeams = GWantTeams;
+        GCountGS->NumStartPlayers = GStartPlayers;
+        GCountGS->NumStartTeams = GStartTeams;
+
+        GLastWroteAlive = GWantAlive;
+        GLastWroteTeams = GWantTeams;
+
+        auto* GM = static_cast<ATslGameMode*>(GCountGS->AuthorityGameMode);
+        if (GM) GM->NumBots = GBotsAlive;
+        if (GM && !GIsTeamSet)
         {
-            ATslGameMode* GM = (ATslGameMode*)GCountGS->AuthorityGameMode;
-
-            if (GM)
-            {
-                GM->TeamSize = S.TeamSize;
-                GM->TslGameState->TeamSize = S.TeamSize;
-                if (S.TeamSize > 1) GM->SquadSize = S.TeamSize;
-                if (S.TeamSize > 1) GM->TslGameState->SquadSize = S.TeamSize;
-                GM->bEnableSquadInTeam = S.TeamSize > 1;
-                if (S.TeamSize > 1) GM->TslGameState->bUsingSquadInTeam = S.TeamSize > 1;
-                if (S.TeamSize > 1) GM->TslGameState->bIsTeamMatch = S.TeamSize > 1;
-                GIsTeamSet = true;
-
-                BLOG("Team size set to " + GM->TeamSize);
-            }
-            else
-            {
-                BLOG("GameMode is invalid");
-            }
+            GM->TeamSize = S.TeamSize;
+            GCountGS->TeamSize = S.TeamSize;
+            if (S.TeamSize > 1) GM->SquadSize = GCountGS->SquadSize = S.TeamSize;
+            GM->bEnableSquadInTeam = S.TeamSize > 1;
+            if (S.TeamSize > 1) GCountGS->bUsingSquadInTeam = GCountGS->bIsTeamMatch = true;
+            GIsTeamSet = true;
+            BLOG("Team size set to " + std::to_string(S.TeamSize));
         }
     }
 
@@ -3702,28 +3997,27 @@ namespace
             return;
 
         const int32 Num = Arr->Num();
-        for (int32 i = 0; i < Num; ++i) {
+        for (int32 i = 0; i < Num; ++i)
+        {
             UObject* O = Arr->GetByIndex(i);
-            if (!O || O->IsDefaultObject())
-                continue;
-
-            if (!O->IsA(ATransportAircraftVehicle::StaticClass()))
+            if (!O || O->IsDefaultObject() || !O->IsA(ATransportAircraftVehicle::StaticClass()))
                 continue;
 
             ATransportAircraftVehicle* Plane = static_cast<ATransportAircraftVehicle*>(O);
             UTslVehicleSeatComponent* Seat = Plane->VehicleSeatComponent;
-
             if (!Seat)
                 continue;
 
             TArray<ATslCharacter*> Riders = Seat->GetRiders();
             if (Riders.Num() <= 0)
                 continue;
+
             const FVector PP = Plane->K2_GetActorLocation();
             FVector Below;
             const bool bLand = TraceDown(World, PP.X, PP.Y, PP.Z - 3000.f, -30000.f, Below) && !IsWaterGround(Below.Z);
             if (!bLand && Since < S.PlaneKickTime + 60.0)
                 continue; // give it up to a minute to reach land
+
             if (!GKickAnnounced)
             {
                 GKickAnnounced = true;
@@ -4026,13 +4320,14 @@ namespace
                 if (GMB && GMB->IsA(AGameMode::StaticClass()))
                 {
                     AGameMode* GM = static_cast<AGameMode*>(GMB);
-                    BLOG(std::string("No real player alive for ") + std::to_string((int)(T - GNoHumansSince)) + " s (" +
-                        std::to_string(GBotsAlive) + " bots left) - ending the match");
+                    BLOG(std::string("No real player alive for ") + std::to_string((int)(T - GNoHumansSince)) + " s (" + std::to_string(GBotsAlive) + " bots left) - ending the match");
                     GEndPending = false;
-                    if (GM->IsA(ATslGameMode::StaticClass()) && GFnFinishMatch)
+                    if (GM->IsA(ATslGameMode::StaticClass()) && GFnFinishMatch) {
                         static_cast<ATslGameMode*>(GM)->FinishMatch();
-                    else
+                    }
+                    else {
                         GM->EndMatch();
+                    }
                 }
                 ScheduleExit(bAnyHumanEver ? "all players dead" : "no players joined");
             }
@@ -4607,6 +4902,12 @@ namespace
 // =====================================================================================
 namespace Bots
 {
+    static bool GServerTerrainReady = false;
+
+    void AfterCall() { ApplyCounters(); }
+    bool IsGameThread() { return GGameThreadId != 0 && GetCurrentThreadId() == GGameThreadId; }
+    void SetTerrainReady(bool Ready) { GServerTerrainReady = Ready; }
+
     void Init(HMODULE Module)
     {
         if (GReady)
@@ -4685,6 +4986,8 @@ namespace Bots
         GMatchStartedAt = Now();
         if (S.BotPeaceTime > 0.f)
             BLOG("Bots won't fight each other for the first " + std::to_string((int)(S.BotPeaceTime / 60.f)) + " min");
+        SyncGameCounters(GWorld);
+        ApplyCounters();
         DumpTeams(GWorld, "match start");
         if (Want > 0)
         {
@@ -4827,20 +5130,6 @@ namespace Bots
             }
             return false;
         }
-        /*
-        if (Func->GetName() == "ServerMove" || Func->GetName() == "ServerMoveDual" || Func->GetName() == "ServerMoveDualHybridRootMotion" || Func->GetName() == "ServerMoveOld")
-        {
-            UCharacterMovementComponent* CMC = nullptr;
-
-            if (Obj->IsA(UCharacterMovementComponent::StaticClass()))
-            {
-                CMC = (UCharacterMovementComponent*)Obj;
-                CMC->bIgnoreClientMovementErrorChecksAndCorrection = true;
-            }
-
-            if (CMC && CMC->GetOwner()->IsA(AAIController::StaticClass())) return true; else return false;
-        }
-        */
         // a "match over / your result" screen for a player who is still alive while bots live: don't send it
         for (int i = 0; i < GNumResultFuncs; ++i)
         {
@@ -4874,11 +5163,91 @@ namespace Bots
         return bBlock;
     }
 
+    struct FHumanNameRequest { APlayerController* Controller; int32 ControllerIndex; APlayerState* State; int32 StateIndex; std::string Name; };
+    std::unordered_map<int32, FHumanNameRequest> GHumanNameRequests;
+    double GNextHumanNameCheck = 0.0;
+    thread_local APlayerState* GDamageVictimState = nullptr;
+    thread_local ATslPlayerState* GDamageBotKillerState = nullptr;
+
+    // Each request belongs to the authenticated controller that sent it.
+    void CaptureHumanNameRequest(UObject* Obj, UFunction* Func, void* Parms)
+    {
+        static UFunction* Request = nullptr;
+        if (!Request && APlayerController::StaticClass())
+            Request = APlayerController::StaticClass()->GetFunction("PlayerController", "ServerChangeName");
+        if (!Request || Func != Request || !Obj || !Parms || !Obj->IsA(APlayerController::StaticClass())) return;
+        auto* PC = static_cast<APlayerController*>(Obj);
+        if (!PC->NetConnection || PC->bIsLocalPlayerController || !PC->PlayerState) return;
+        auto* PS = PC->PlayerState;
+        if (PS->GetOwner() != PC) return;
+        const FString& Value = static_cast<Params::PlayerController_ServerChangeName*>(Parms)->S;
+        if (Value.Num() < 2 || Value.Num() > 25) return;
+        const std::string Name = Value.ToString();
+        if (Name.empty() || Name.size() > 24) return;
+        for (const unsigned char C : Name)
+            if (!((C >= 'A' && C <= 'Z') || (C >= 'a' && C <= 'z') || (C >= '0' && C <= '9') || C == '_')) return;
+        if (GHumanNameRequests.size() >= 128 && !GHumanNameRequests.count(PS->GetIndex())) return;
+        GHumanNameRequests[PS->GetIndex()] = { PC, PC->GetIndex(), PS, PS->GetIndex(), Name };
+        BLOG("Player name request received: " + Name);
+    }
+
     // top of the ProcessEvent hook: records the call trace and logs deaths / match end
     void OnCall(UObject* Obj, UFunction* Func, void* Parms)
     {
         if (!GReady || !Func || GetCurrentThreadId() != GGameThreadId)
             return;
+
+        ApplyCounters();
+        CaptureHumanNameRequest(Obj, Func, Parms);
+        if (Func == GFnBroadcastDeath && Parms && Obj == GDamageVictimState && GDamageBotKillerState) {
+            auto* Death = static_cast<Params::TslPlayerState_BroadcastDeath*>(Parms);
+            if (!Death->KillerPlayerState) {
+                Death->KillerPlayerState = GDamageBotKillerState;
+                BLOG("Bot kill attribution restored for the matching damage event");
+            }
+        }
+        if (Func == GFnBroadcastDeath && Obj && Parms) {
+            auto* Death = static_cast<Params::TslPlayerState_BroadcastDeath*>(Parms);
+            // Resolve the two actual player states against the most recent
+            // live character snapshot. Avoid recursive ProcessEvent hooks.
+            static thread_local bool CheckingDistance = false;
+            if (!CheckingDistance && Death->KillerPlayerState && Death->KillerPlayerState != Obj &&
+                std::isfinite(Death->InDistanceFromKillerToVictim) && Death->InDistanceFromKillerToVictim > 0.f) {
+                CheckingDistance = true;
+                // GetTslPlayerState dispatches ProcessEvent; prevent nested
+                // bot ticks from refreshing GChars while iterating it.
+                const bool WasInTick = GInTick; GInTick = true;
+                const FCharInfo* Victim = nullptr; const FCharInfo* Killer = nullptr;
+                for (const FCharInfo& C : GChars) {
+                    if (!LiveBotObject(C.Char, C.Index)) continue;
+                    APlayerState* State = C.Char->GetTslPlayerState();
+                    if (State == Obj) Victim = &C;
+                    if (State == Death->KillerPlayerState) Killer = &C;
+                    if (Victim && Killer) break;
+                }
+                if (Victim && Killer) {
+                    const float Metres = Len(Killer->Loc - Victim->Loc) / 100.f;
+                    const float Old = Death->InDistanceFromKillerToVictim;
+                    // Only correct clear centimetre-scale outliers; preserve
+                    // ordinary values and any kill whose positions are unknown.
+                    if (std::isfinite(Metres) && Metres > 1.f && Old > Metres * 20.f && Old < Metres * 200.f) {
+                        Death->InDistanceFromKillerToVictim = Metres;
+                        BLOG("Kill distance candidate: " + std::to_string((int)Old) + " -> " + std::to_string((int)Metres) + " m");
+                    }
+                }
+                GInTick = WasInTick;
+                CheckingDistance = false;
+            }
+        }
+        if (!GMatchSpawnDone && Parms)
+            for (int i = 0; i < GNumOnSetState; ++i)
+                if (Func == GFnOnSetState[i] && static_cast<FName*>(Parms)->ToString() == "InProgress")
+                {
+                    OnMatchStarted();
+                    SyncGameCounters(UWorld::GetWorld());
+                    ApplyCounters();
+                    break;
+                }
 
         if (Func == GFnBroadcastDeath && Parms && S.FixKillFeedCount && S.BotsInPlayerCount && GBotsAlive > 0)
         {
@@ -4957,6 +5326,87 @@ namespace Bots
         }
     }
 
+    void UpdateMatchStartup(UWorld* World)
+    {
+        if (!Bots::IsGameThread()) return;
+        static UWorld* LastWorld = nullptr;
+        static bool Configured = false, Failed = false;
+        static ULONGLONG NextCheck = 0;
+        if (World != LastWorld) {
+            LastWorld = World; Configured = Failed = false; NextCheck = 0;
+        }
+        if (!World || !GServerTerrainReady || Configured || Failed || GetTickCount64() < NextCheck) return;
+        NextCheck = GetTickCount64() + 1000;
+        if (!World->AuthorityGameMode || !World->AuthorityGameMode->IsA(ATslGameMode::StaticClass())) return;
+        auto* GM = static_cast<ATslGameMode*>(World->AuthorityGameMode);
+        auto* GS = GM->TslGameState;
+        auto* Old = GM->MatchPreparer;
+        if (!GS || !GS->LevelAttribute || !Old || GM->MatchState.ToString() != "WaitingToStart") return;
+        const auto Base = InSDKUtils::GetImageBase();
+        auto Fail = [&](const char* Reason) {
+            Failed = true;
+            CUSTOMLOG(std::string("[PUBG2019PS] Match startup refused: ") + Reason);
+            };
+        if (!Old->IsA(UMatchPreparer::StaticClass()) || *reinterpret_cast<ATslGameMode**>(reinterpret_cast<uintptr_t>(Old) + 0x40) != GM) {
+            Fail("unsupported preparer context"); return;
+        }
+        UClass* AirborneClass = nullptr;
+        for (const auto& Entry : GM->MatchPreparerClasses)
+            if (Entry.Type == EMatchStartType::Airborne && Entry.Class) { AirborneClass = Entry.Class; break; }
+        if (!AirborneClass || !AirborneClass->IsSubclassOf(UAirborneMatchPreparer::StaticClass())) {
+            Fail("airborne preparer class missing"); return;
+        }
+        const bool ExistingAirborne = Old->IsA(UAirborneMatchPreparer::StaticClass());
+        auto* Preparer = ExistingAirborne ? Old : static_cast<UMatchPreparer*>(UGameplayStatics::SpawnObject(AirborneClass, GM));
+        if (!Preparer || !Preparer->IsA(UAirborneMatchPreparer::StaticClass())) {
+            Fail("airborne preparer creation failed"); return;
+        }
+        auto** VTable = *reinterpret_cast<void***>(Preparer);
+        constexpr unsigned char StartPrologue[]{ 0x48,0x8b,0xc4,0x55,0x41,0x56,0x41,0x57 };
+        if (reinterpret_cast<uintptr_t>(VTable[0x258 / 8]) != Base + 0x294a1c0 ||
+            reinterpret_cast<uintptr_t>(VTable[0x240 / 8]) != Base + 0x2942db0 ||
+            std::memcmp(VTable[0x258 / 8], StartPrologue, sizeof(StartPrologue)) != 0) {
+            Fail("unsupported native startup methods"); return;
+        }
+        if (!ExistingAirborne) {
+            auto** Context = reinterpret_cast<ATslGameMode**>(reinterpret_cast<uintptr_t>(Preparer) + 0x40);
+            if (*Context) { Fail("new preparer has an unexpected context"); return; }
+            // SpawnObject leaves this native (non-reflected) context unset. Bind
+            // the same field verified in the original instance and its methods.
+            *Context = GM;
+        }
+        using GetWorldFn = UWorld * (*)(UMatchPreparer*);
+        using Action = void(*)(UMatchPreparer*);
+        if (reinterpret_cast<GetWorldFn>(VTable[0x130 / 8])(Preparer) != World) {
+            Fail("preparer world binding failed"); return;
+        }
+        const auto PreviousType = GM->MatchStartType;
+        const auto PreviousStateType = GS->MatchStartType;
+        GM->MatchPreparer = Preparer;
+        GM->MatchStartType = EMatchStartType::Airborne;
+        GS->MatchStartType = EMatchStartType::Airborne;
+        GS->bTimerPaused = GetIniBool("Bots", "HoldLobbyWhenEmpty", true);
+        Preparer->WarmupTime = (std::max)(5, (std::min)(900, GetWaitTime()));
+        auto* Airborne = static_cast<UAirborneMatchPreparer*>(Preparer);
+        if (!ExistingAirborne || Airborne->Aircrafts.Num() == 0)
+            reinterpret_cast<Action>(VTable[0x240 / 8])(Preparer);
+        if (Airborne->Aircrafts.Num() == 0) {
+            GM->MatchPreparer = Old; GM->MatchStartType = PreviousType; GS->MatchStartType = PreviousStateType;
+            Fail("native aircraft preparation failed"); return;
+        }
+        auto* Timer = reinterpret_cast<uint64*>(reinterpret_cast<uintptr_t>(Preparer) + 0x48);
+        if (!*Timer) {
+            // The native registration method returns without registering a timer
+            // when RemainingTime is already nonzero. Let it initialize the value.
+            GS->RemainingTime = 0;
+            reinterpret_cast<Action>(VTable[0x258 / 8])(Preparer);
+        }
+        if (!*Timer || GS->RemainingTime <= 0) { Fail("native countdown did not register"); return; }
+        Configured = true;
+        CUSTOMLOG("[PUBG2019PS] Match startup ready: native airborne preparer, aircraft=" + std::to_string(Airborne->Aircrafts.Num()) +
+            ", countdown=" + std::to_string(GS->RemainingTime) + " s; waiting for a real player.");
+    }
+
     void OnMatchStarted();
 
     void Tick()
@@ -5031,14 +5481,15 @@ namespace Bots
                             DumpTeams(World, "match state -> " + MS.ToString());
                         }
 
-                        if (bStateChanged && Rem <= 0 && GLastRemaining <= 0)
+                        // LeavingMap / WaitingPostMatch are not a new match.
+                        if (MS.ToString() == "InProgress")
                         {
                             BLOG("Detected match start (MatchState " + MS.ToString() + ", RemainingTime " + std::to_string(Rem) + ")");
                             GatherCharacters(World);
                             Bots::OnMatchStarted();
                         }
 
-                        if (S.RegisterTeams && S.SpawnOnMatchStart && !GLobbySpawned && !GMatchSpawnDone && Rem > 10 && HasRemotePlayer(World))
+                        if (MS.ToString() == "WaitingToStart" && GServerTerrainReady && S.RegisterTeams && S.SpawnOnMatchStart && !GLobbySpawned && !GMatchSpawnDone && Rem > 10 && HasRemotePlayer(World))
                         {
                             GLobbySpawned = true;
                             GPendingLobbySpawns += (std::max)(0, S.Count);
@@ -5058,8 +5509,8 @@ namespace Bots
                 int Spawned = 0;
                 while (GPendingLobbySpawns > 0 && Spawned < S.SpawnPerTick)
                 {
+                    if (!SpawnBotNearPlayer(World)) break; // retry when the pawn/floor is ready
                     --GPendingLobbySpawns; ++Spawned;
-                    SpawnBotNearPlayer(World);
                 }
                 if (T < GSpawnNotBefore) Spawned = S.SpawnPerTick; // hold until the plane has everyone
                 while (GPendingNearSpawns > 0 && Spawned < S.SpawnPerTick)
@@ -5082,6 +5533,13 @@ namespace Bots
 
                 if (!GBots.empty())
                 {
+                    // Mark dead/removed pawns before all AI passes, not only
+                    // inside UpdateBot: hunter and appearance passes use them.
+                    for (FBot& B : GBots)
+                    {
+                        if (B.State == EBotState::Dead || !B.Pawn) continue;
+                        if (!LiveBotObject(B.Pawn, B.PawnIndex) || B.Pawn->Health <= 0.f) EnterDead(B, T);
+                    }
                     GatherCharacters(World);
                     CountEngaged();
                     LearnAimMode();
@@ -5095,11 +5553,16 @@ namespace Bots
                     for (FBot& B : GBots)
                     {
                         // AI LOD: full rate near players / in a fight, slower far away (spread so they don't all think on the same frame)
-                        if (S.AiLod && GMatchSpawnDone && T < B.NextThinkAt && B.State != EBotState::Combat) continue;
+                        // Aircraft exits, active skydives and swimmers need timely updates.
+                        const bool Urgent = B.Pawn && (B.NativeSkyActive || B.Pawn->IsInAircraft() || B.Pawn->IsSwimming());
+                        if (S.AiLod && GMatchSpawnDone && !Urgent && T < B.NextThinkAt && B.State != EBotState::Combat) continue;
                         UpdateBot(World, B, T);
+                        // A synchronous damage event can destroy the pawn during UpdateBot.
+                        if (B.State != EBotState::Dead && B.Pawn && (!LiveBotObject(B.Pawn, B.PawnIndex) || B.Pawn->Health <= 0.f)) EnterDead(B, T);
                         if (S.AiLod && GMatchSpawnDone && B.State != EBotState::Dead && B.Pawn)
                         {
-                            float HD = 1e9f; FVector HL;
+                            float HD = 1e9f;
+                            FVector HL;
                             NearestHuman(B.Pawn->K2_GetActorLocation(), 1e9f, HD, HL);
                             const double Every = (B.State == EBotState::Combat || HD < 60000.f) ? 0.0 : HD < 150000.f ? 0.3 : 1.0;
                             B.NextThinkAt = T + Every * RandF(0.8f, 1.2f);
@@ -5133,6 +5596,17 @@ namespace Bots
         else
         {
             BLOG("World is invalid");
+        }
+
+        const double TickMs = (Now() - T) * 1000.0;
+        static double MaxTickMs = 0.0, NextStatusAt = 0.0;
+        MaxTickMs = (std::max)(MaxTickMs, TickMs);
+        if (GMatchSpawnDone && T >= NextStatusAt)
+        {
+            NextStatusAt = T + 5.0;
+            BLOG("Runtime: humans=" + std::to_string(GHumansAlive) + " bots=" + std::to_string(GBotsAlive) +
+                " teams=" + std::to_string(GTeamsAlive) + " max AI tick ms=" + std::to_string(MaxTickMs));
+            MaxTickMs = 0.0;
         }
 
         GInTick = false;

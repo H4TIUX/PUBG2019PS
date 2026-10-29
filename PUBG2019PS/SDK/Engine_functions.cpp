@@ -28345,20 +28345,6 @@ float UAnimSequenceBase::GetPlayLength()
 
 class UWorld* UWorld::GetWorld()
 {
-	/*
-	if constexpr (Offsets::GWorld != 0)
-		return *reinterpret_cast<UWorld**>(InSDKUtils::GetImageBase() + Offsets::GWorld);
-
-	if (UEngine* Engine = UEngine::GetEngine())
-	{
-		if (!Engine->GameViewport)
-			return nullptr;
-
-		return Engine->GameViewport->World;
-	}
-
-	return nullptr;
-	*/
 	if (SDK::UEngine* Engine = SDK::UEngine::GetEngine())
 	{
 		if (!Engine->GameViewport)

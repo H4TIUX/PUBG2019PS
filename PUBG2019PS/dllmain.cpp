@@ -21,34 +21,38 @@
 #include "../PUBG2019PS/SDK/Engine_parameters.hpp"
 #include "../PUBG2019PS/SDK/TslGame_parameters.hpp"
 
-#include "BotLogic.h"
+#include "Bots/BotLogic.h"
 
 using namespace SDK;
+#include "NativeNullGuard.inl"
 
 void CUSTOMLOG(std::string LOG)
 {
     std::cout << LOG << std::endl;
 }
 
+class AActor* SpawnActorFromClass(
+    class UObject* WorldContextObject, TSubclassOf < class AActor > ActorClass,
+    const struct FTransform& SpawnTransform,
+    ESpawnActorCollisionHandlingMethod CollisionHandlingOverride,
+    class AActor* Owner) {
+    auto Spawned = UGameplayStatics::BeginDeferredActorSpawnFromClass(
+        WorldContextObject, ActorClass, SpawnTransform, CollisionHandlingOverride,
+        Owner);
+
+    Spawned = UGameplayStatics::FinishSpawningActor(Spawned, SpawnTransform);
+
+    return Spawned;
+}
+
 SDK::UClass* Get_PlayerPawn_Class();
 
 using ProcessEvent_t = void (*)(UObject*, UFunction*, void*);
 ProcessEvent_t GOriginalProcessEvent = nullptr;
+UMatchPreparer* GLOB_OLD_MatchPreparer = nullptr;
 
     void HookedProcessEvent(UObject* Obj, UFunction* Func, void* Parms)
     {
-        if (Func->GetName() == "K2_OnRestartPlayer")
-        {
-            CUSTOMLOG("[PUBG2019PS] OnRestartPlayer by " + Obj->GetName());
-            auto Args = (Params::GameModeBase_K2_OnRestartPlayer*)Parms;
-
-            ATslCharacter* Character = (ATslCharacter*)Args->NewPlayer->K2_GetPawn();
-            for (int i = 0; i < 200; ++i)
-            {
-                Character->Health = Character->HealthMax;
-            }
-        }
-
         if (Obj->IsA(UCharacterMovementComponent::StaticClass()))
         {
             UCharacterMovementComponent* CMC = (UCharacterMovementComponent*)Obj;
@@ -189,6 +193,8 @@ ProcessEvent_t GOriginalProcessEvent = nullptr;
 
         GOriginalProcessEvent(Obj, Func, Parms);
 
+        Bots::AfterCall();
+
         if (Func && Bots::IsEndMatchQuery(Func))
             Bots::FilterEndMatch(Parms);
 
@@ -201,8 +207,9 @@ ProcessEvent_t GOriginalProcessEvent = nullptr;
         {
             bInsideTick = true;
             LastTick = CurrentTime;
-
+            
             Bots::Tick();
+            Bots::UpdateMatchStartup(UWorld::GetWorld());
 
             bInsideTick = false;
         }
@@ -270,8 +277,7 @@ ProcessEvent_t GOriginalProcessEvent = nullptr;
             CUSTOMLOG("AActor::GetNetMode Hook Enabled!");
         }
 
-        uintptr_t ProcessEventAddr3 =
-            (uintptr_t(GetModuleHandle(0)) + 0x1A48A60);
+        uintptr_t ProcessEventAddr3 = (uintptr_t(GetModuleHandle(0)) + 0x1A48A60);
 
         auto HookResult3 = MH_CreateHook((PVOID&)ProcessEventAddr3, GetNetModeHook, reinterpret_cast <LPVOID*> (&GetNetModeO));
         std::string HookResultString3 = MH_StatusToString(HookResult3);
@@ -311,112 +317,82 @@ ProcessEvent_t GOriginalProcessEvent = nullptr;
 
     static FProp ObjProp(SDK::UObject* O, const char* Name)
     {
-        if (!O || !Name)
-            return {};
-
-        static std::unordered_map<std::string, FProp> Cache;
-        static std::mutex CacheMutex;
+        if (O == nullptr || Name == nullptr || *Name == '\0') return {};
 
         SDK::UClass* Cls = O->GetClass();
-        if (!Cls)
-            return {};
+        if (Cls == nullptr) return {};
 
-        std::string Key = Cls->GetName();
-        Key += "::";
-        Key += Name;
-
+        for (UStruct* S = Cls; S != nullptr; S = S->Super)
         {
-            std::lock_guard<std::mutex> Lock(CacheMutex);
-            auto It = Cache.find(Key);
-            if (It != Cache.end())
-                return It->second;
-        }
-
-        FProp Result{};
-
-        for (SDK::UStruct* S = Cls; S; S = S->Super)
-        {
-            for (SDK::UField* Field = S->Children; Field; Field = Field->Next)
+            for (UField* Field = S->Children; Field != nullptr; Field = Field->Next)
             {
-                if (!Field->IsA(SDK::UProperty::StaticClass()))
-                    continue;
+                if (!Field->IsA(UProperty::StaticClass())) continue;
 
-                auto* P = static_cast<SDK::UProperty*>(Field);
+                auto* P = static_cast<UProperty*>(Field);
+                if (P->GetName() != Name) continue;
 
-                if (P->GetName() != Name)
-                    continue;
-
+                FProp Result{};
                 Result.Property = P;
                 Result.Off = P->Offset;
 
-                if (P->IsA(SDK::UBoolProperty::StaticClass()))
-                {
-                    auto* BP = static_cast<SDK::UBoolProperty*>(P);
-                    Result.Type = "BoolProperty";
-                    Result.ByteOff = BP->ByteOffset;
-                    Result.Mask = BP->FieldMask;
-                }
-                else
+                if (!P->IsA(UBoolProperty::StaticClass()))
                 {
                     Result.Type = "OtherProperty";
+                    return Result;
                 }
 
-                break;
+                auto* BP = static_cast<UBoolProperty*>(P);
+
+                Result.Type = "BoolProperty";
+                Result.ByteOff = BP->ByteOffset;
+                Result.Mask = BP->FieldMask;
+
+                if (Result.Mask == 0 || (Result.Mask != 0xFF && (Result.Mask & (Result.Mask - 1)) != 0)) return {};
+                return Result;
             }
-
-            if (Result.Ok())
-                break;
         }
 
-        if (Result.Ok())
+        return {};
+    }
+
+    static bool WriteBool(SDK::UObject* O, const char* Name, bool Value)
+    {
+        if (O == nullptr || Name == nullptr || *Name == '\0') return false;
+
+        const FProp P = ObjProp(O, Name);
+
+        if (!P.Ok() || P.Type != "BoolProperty" || P.Property == nullptr) return false;
+
+        auto* Base = reinterpret_cast<std::uint8_t*>(O);
+        auto* Byte = Base + P.Off + P.ByteOff;
+
+        if (P.Mask == 0xFF)
         {
-            std::lock_guard<std::mutex> Lock(CacheMutex);
-            Cache.emplace(Key, Result);
+            const std::uint8_t NewValue = Value ? 1u : 0u;
+            std::memcpy(Byte, &NewValue, sizeof(NewValue));
         }
-
-        return Result;
-    }
-
-    bool WriteBool(SDK::UObject* O, const char* Name, bool V)
-    {
-        FProp P = ObjProp(O, Name);
-
-        if (!O || !P.Ok() || P.Type != "BoolProperty")
-            return false;
-
-        auto* B = reinterpret_cast<uint8*>(reinterpret_cast<uint8*>(O) + P.Off + P.ByteOff);
-
-        if (P.Mask == 0xFF)
-            *B = V ? 1 : 0;
         else
-            *B = V ? (*B | P.Mask) : (*B & ~P.Mask);
-
-        return true;
-    }
-
-    bool WriteUInt8(SDK::UObject* O, const char* Name, uint8 V)
-    {
-        FProp P = ObjProp(O, Name);
-
-        if (!O || !P.Ok() || P.Type != "ByteProperty")
-            return false;
-
-        auto* B = reinterpret_cast<uint8*>(reinterpret_cast<uint8*>(O) + P.Off + P.ByteOff);
-
-        if (P.Mask == 0xFF)
-            *B = V;
-        else
-            *B = (*B & ~P.Mask) | (V & P.Mask);
+        {
+            std::uint8_t Current{};
+            std::memcpy(&Current, Byte, sizeof(Current));
+            const std::uint8_t NewValue = Value ? static_cast<std::uint8_t>(Current | P.Mask) : static_cast<std::uint8_t>(Current & static_cast<std::uint8_t>(~P.Mask));
+            std::memcpy(Byte, &NewValue, sizeof(NewValue));
+        }
 
         return true;
     }
 
     void DisableLevelStreaming(UWorld* World)
     {
-        for (ULevelStreaming* L : World->StreamingLevels) {
-            if (!L) continue;
+        if (!World)
+        {
+            CUSTOMLOG("World is invalid");
+            return;
+        }
 
-            //if (L->GetName().contains("3")) continue;
+        for (ULevelStreaming* L : World->StreamingLevels)
+        {
+            if (!L) continue;
 
             if (L->PackageName.ToString().contains("eather")) continue;
             if (L->PackageNameToLoad.ToString().contains("eather")) continue;
@@ -425,14 +401,9 @@ ProcessEvent_t GOriginalProcessEvent = nullptr;
             WriteBool(L, "bShouldBeLoaded", true);
             WriteBool(L, "bShouldBeVisible", true);
         }
-    }
 
-    class AActor* SpawnActorFromClass_Main(UObject* WorldContextObject, TSubclassOf<AActor>ActorClass, FTransform& SpawnTransform, ESpawnActorCollisionHandlingMethod CollisionHandlingOverride, AActor* Owner)
-    {
-        auto Spawned = UGameplayStatics::BeginDeferredActorSpawnFromClass(WorldContextObject, ActorClass, SpawnTransform, CollisionHandlingOverride, Owner);
-        Spawned = UGameplayStatics::FinishSpawningActor(Spawned, SpawnTransform);
-
-        return Spawned;
+        Sleep(3000);
+        Bots::SetTerrainReady(true);
     }
 
     void InitUEConsole()
@@ -491,6 +462,12 @@ ProcessEvent_t GOriginalProcessEvent = nullptr;
         Bots::Init(Module);
         Bots::Prewarm();
 
+        CUSTOMLOG(InstallNullGuard() ? "Native null guard installed" : "Native null guard installation failed");
+        CUSTOMLOG(InstallNullContextGuard() ? "nullptr crash fix: second null guard installed" : "nullptr crash fix: second null guard installation failed");
+        CUSTOMLOG(InstallNullCharacterGuard() ? "nullptr crash fix: character null guard installed" : "nullptr crash fix: character null guard installation failed");
+
+        CUSTOMLOG("[PUBG2019PS] Loading all streaming levels, please be patient...");
+
         DisableLevelStreaming(UWorld::GetWorld());
         Sleep(15000);
 
@@ -510,19 +487,10 @@ ProcessEvent_t GOriginalProcessEvent = nullptr;
         CUSTOMLOG("[PUBG2019PS] ProcessEvent hooked - bots are live. Type 'help' in this console.");
 
         ATslGameMode* GM = (ATslGameMode*)UGameplayStatics::GetGameMode(UWorld::GetWorld());
-        CUSTOMLOG("MatchPreparer: " + GM->MatchPreparer->GetName());
-        CUSTOMLOG("MatchStartType: " + (uint8)GM->MatchStartType);
-        CUSTOMLOG("MatchState: " + GM->MatchState.ToString());
 
         GM->TslGameState->bTimerPaused = false;
-
         GM->TslGameState->NumStartPlayers = 0;
         GM->TslGameState->NumStartTeams = 0;
-
-        //GM->MatchPreparer->WarmupTime = 50;
-        //GM->MatchPreparer->TimerGameStartCountDown();
-
-        //return 0;
     }
 
 SDK::UClass* Get_PlayerPawn_Class()

@@ -10,8 +10,8 @@
 #include <random>
 #include <string>
 #include <vector>
-#include "../simpleini/SimpleIni.h"
-#include "SDK.hpp"
+#include "../../simpleini/SimpleIni.h"
+#include "../SDK.hpp"
 
 
 using namespace SDK;
