@@ -20,9 +20,9 @@ namespace Bots
 
     // Call at the top of the ProcessEvent hook. Cheap when there is nothing to do.
     void Tick();
-
-    // Airplane logic
-    void UpdateMatchStartup(UWorld* World);
+    void AfterCall();
+    bool IsGameThread();
+    void SetTerrainReady(bool Ready);
 
     // Call when the match starts (K2_OnSetMatchState -> match starting).
     void OnMatchStarted();
@@ -45,9 +45,4 @@ namespace Bots
 
     // True if this pawn is one of our bots (used to skip the join-teleport for bots).
     bool IsBotPawn(SDK::APawn* Pawn);
-
-    void AfterCall();
-    bool IsGameThread();
-
-    void SetTerrainReady(bool Ready);
 }

@@ -146,10 +146,20 @@
     <ClInclude Include="..\minhook_src\hde\table64.h" />
     <ClInclude Include="..\simpleini\ConvertUTF.h" />
     <ClInclude Include="..\simpleini\SimpleIni.h" />
+    <ClInclude Include="Bluezone\ZoneBoostPolicy.hpp" />
     <ClInclude Include="Bots\BotLogic.h" />
+    <ClInclude Include="Damage\KillDistancePolicy.hpp" />
+    <ClInclude Include="Damage\SharedWeaponDamage.hpp" />
+    <ClInclude Include="Damage\WeaponDamagePolicy.hpp" />
+    <ClInclude Include="DoorTraversalPolicy.hpp" />
     <ClInclude Include="framework.h" />
+    <ClInclude Include="GhilliePolicy.hpp" />
     <ClInclude Include="IniSettings\IniSettings.h" />
+    <ClInclude Include="LandingApproach.hpp" />
+    <ClInclude Include="LootSpatial.hpp" />
     <ClInclude Include="MinHook.h" />
+    <ClInclude Include="NameTeamPolicy.hpp" />
+    <ClInclude Include="PropertyFixup.hpp" />
     <ClInclude Include="SDK.hpp" />
     <ClInclude Include="SDK\AIModule_classes.hpp" />
     <ClInclude Include="SDK\AIModule_parameters.hpp" />
@@ -199,7 +209,11 @@
     <Text Include="..\simpleini\SOURCE.txt" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="MatchStartup.inl" />
+    <None Include="NameCollisions.inl" />
+    <None Include="NativeMatchEnd.inl" />
     <None Include="NativeNullGuard.inl" />
+    <None Include="NativeSkydive.inl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -18,6 +18,12 @@
     <Filter Include="IniSettings">
       <UniqueIdentifier>{c47af918-669b-407a-8d11-6e54ca29faff}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Bluezone">
+      <UniqueIdentifier>{e20d0f96-a0a8-4481-b762-fbb515d6cf83}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Damage">
+      <UniqueIdentifier>{d9e37761-4518-4e4d-975c-fae18ee76aef}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
@@ -131,6 +137,36 @@
     <ClInclude Include="IniSettings\IniSettings.h">
       <Filter>IniSettings</Filter>
     </ClInclude>
+    <ClInclude Include="DoorTraversalPolicy.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="GhilliePolicy.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LandingApproach.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LootSpatial.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="NameTeamPolicy.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PropertyFixup.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Bluezone\ZoneBoostPolicy.hpp">
+      <Filter>Bluezone</Filter>
+    </ClInclude>
+    <ClInclude Include="Damage\KillDistancePolicy.hpp">
+      <Filter>Damage</Filter>
+    </ClInclude>
+    <ClInclude Include="Damage\SharedWeaponDamage.hpp">
+      <Filter>Damage</Filter>
+    </ClInclude>
+    <ClInclude Include="Damage\WeaponDamagePolicy.hpp">
+      <Filter>Damage</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -184,6 +220,18 @@
   <ItemGroup>
     <None Include="NativeNullGuard.inl">
       <Filter>Header Files</Filter>
+    </None>
+    <None Include="NameCollisions.inl">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="NativeMatchEnd.inl">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="NativeSkydive.inl">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="MatchStartup.inl">
+      <Filter>Source Files</Filter>
     </None>
   </ItemGroup>
 </Project>
