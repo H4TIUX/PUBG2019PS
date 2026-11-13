@@ -1,0 +1,13 @@
+D:\repos\PUBG2019PS\minhook_src\hde\hde32.c;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\hde32.obj
+D:\repos\PUBG2019PS\minhook_src\hde\hde64.c;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\hde64.obj
+D:\repos\PUBG2019PS\simpleini\ConvertUTF.c;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\ConvertUTF.obj
+D:\repos\PUBG2019PS\PUBG2019PS\Bots\BotLogic.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\BotLogic.obj
+D:\repos\PUBG2019PS\PUBG2019PS\CoreUObject_functions.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\CoreUObject_functions.obj
+D:\repos\PUBG2019PS\PUBG2019PS\dllmain.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\dllmain.obj
+D:\repos\PUBG2019PS\PUBG2019PS\IniSettings\IniSettings.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\IniSettings.obj
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\AIModule_functions.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\AIModule_functions.obj
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\Basic.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\Basic.obj
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\Engine_functions.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\Engine_functions.obj
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\GameplayTasks_functions.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\GameplayTasks_functions.obj
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\Landscape_functions.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\Landscape_functions.obj
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\TslGame_functions.cpp;D:\repos\PUBG2019PS\PUBG2019PS\x64\Debug\TslGame_functions.obj

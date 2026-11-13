@@ -1,0 +1,3 @@
+using System;
+using System.Reflection;
+class TestUpdaterProtection { static void Main(){var a=Assembly.LoadFrom("PUBG2019Launcher.exe");var m=a.GetType("UpdateManager").GetMethod("Protected",BindingFlags.Static|BindingFlags.NonPublic);foreach(string p in new[]{"Portable2019/Client/Config/WindowsNoEditor/GameUserSettings.ini","Portable2019/Backups/custom.dat","Portable2019/Client/anything.bin"})if(!(bool)m.Invoke(null,new object[]{p}))throw new Exception("Unprotected path: "+p);if((bool)m.Invoke(null,new object[]{"Defaults/settings.ini"}))throw new Exception("Defaults must update");Console.WriteLine("PASS: portable profile protected from updates.");}}

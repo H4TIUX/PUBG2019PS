@@ -1,1 +1,0 @@
-TslGame.exe Savage_Main?listen -port=8888 -LOG -unattended -nullrhi -nosound -AllowJoinAnyMatchState -NoBattleEye -NoBE -NoEAC -NoVerifyGC -NotInstalled

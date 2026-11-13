@@ -1,0 +1,19 @@
+﻿  BotLogic.cpp
+D:\repos\PUBG2019PS\PUBG2019PS\UtilsDefs.h(99,28): warning C4244: 'return': conversion from 'UC::uint64' to 'UC::int32', possible loss of data
+  (compiling source file 'Bots/BotLogic.cpp')
+  
+D:\repos\PUBG2019PS\PUBG2019PS\UtilsDefs.h(123,53): warning C4244: '=': conversion from 'UC::uint64' to 'UC::uint32', possible loss of data
+  (compiling source file 'Bots/BotLogic.cpp')
+  
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\Basic.hpp(747,2): warning C4369: 'SDK::EObjectFlags':  enumerator value '2147483648' cannot be represented as 'int', value is '2147483648'
+  (compiling source file 'Bots/BotLogic.cpp')
+  
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\TslGame_structs.hpp(2389,2): warning C4309: 'initializing': truncation of constant value
+  (compiling source file 'Bots/BotLogic.cpp')
+  
+D:\repos\PUBG2019PS\PUBG2019PS\SDK\TslGame_structs.hpp(2389,2): warning C4369: 'SDK::ETslParticleCullType':  enumerator value '256' cannot be represented as 'unsigned char', value is '256'
+  (compiling source file 'Bots/BotLogic.cpp')
+  
+D:\repos\PUBG2019PS\PUBG2019PS\Bots\BotLogic.cpp(1243,1): warning C4715: '`anonymous namespace'::GetPawnClass': not all control paths return a value
+D:\repos\PUBG2019PS\PUBG2019PS\Bots\BotLogic.cpp(887,1): warning C4715: '`anonymous namespace'::FindRealPlayer': not all control paths return a value
+  PUBG2019PS.vcxproj -> D:\repos\PUBG2019PS\x64\Debug\PUBG2019PS.dll

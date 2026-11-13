@@ -14,10 +14,7 @@ Bots and their corresponding logic are included in this server build. They aren'
 - Download PUBG 6.0.6.3 from Steam Depots. Open the steam console (Win + R -> steam://open/console) and use the following commands:
 - Download content:  download_depot 578080 578081 6844732025739669729
 - Download binaries:  download_depot 578080 578082 442406709355752115
-- Compile the DLL, preferrably using Visual Studio 2022
-- Place the settings.ini config file in the same folder as the compiled DLL
-- Copy the contents of the Win64 folder in the repository to /TslGame/Binaries/Win64/ in the game files
-- Run the batch file corresponding to the map you want to play
-- Inject the DLL after the map has loaded
+- Place everything on the Releases tab in /TslGame/Binaries/Win64/
+- Read the MASTER_AND_CHAT_USER_MANUAL_EN.md markdown file and use the launcher accordingly to start the game
 
 - Made with <3 by H4TIUX
